@@ -15,8 +15,10 @@ pub mod json;
 pub mod model;
 pub mod ot;
 pub mod present;
+pub mod render;
 pub mod replay;
 pub mod text;
+pub mod validate;
 pub mod version;
 pub mod worktree;
 

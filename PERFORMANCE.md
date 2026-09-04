@@ -182,7 +182,7 @@ O(changed paths) regardless of history length.
 
 ## Validation
 
-`validate` in `cli.rs` performs four passes over the patches, one pass over the
+`validate` in `validate.rs` performs four passes over the patches, one pass over the
 frontier, plus a full replay:
 
 1. Revision arithmetic (`revision == base[author] + 1`, with `checked_add`)

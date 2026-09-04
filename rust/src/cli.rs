@@ -5,15 +5,12 @@
 //! testable in-process without spawning anything or touching global state.
 
 use crate::error::{self, Error, Result};
-use crate::model::{
-    self, Change, ChangeKind, Content, Patch, Repository, Tree, MAX_COMMIT_MESSAGE_BYTES,
-};
+use crate::model::{self, Change, ChangeKind, Patch, Repository, Tree, MAX_COMMIT_MESSAGE_BYTES};
 use crate::present::{self, LogEntry, Mode, Presentation, Success};
 use crate::replay::{self, Warnings};
 use crate::text;
 use crate::version::{validate_contributor_id, Version};
-use crate::{config, http, worktree};
-use std::fmt::Write as _;
+use crate::{config, http, render, validate, worktree};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -115,83 +112,16 @@ struct Session {
     repository: Repository,
 }
 
-/// Locate and fully validate the nearest repository (SPEC §4.5, §7).
+/// Locate the nearest repository and validate it (SPEC §4.5, §7).
+///
+/// Locating is an environment concern, so it lives here; the checks
+/// themselves are in `validate`.
 fn open(env: &Env) -> Result<Session> {
     let root = worktree::discover(&env.cwd).ok_or_else(error::not_a_repository)?;
     let text = std::fs::read_to_string(worktree::repository_path(&root))
         .map_err(|e| Error::new(format!("cannot read repository: {e}")))?;
-    let repository = load(&text)?;
+    let repository = validate::load(&text)?;
     Ok(Session { root, repository })
-}
-
-/// Parse and validate a repository value (SPEC §4.5).
-fn load(text: &str) -> Result<Repository> {
-    let repository = Repository::from_json_str(text)?;
-    validate(&repository)?;
-    Ok(repository)
-}
-
-/// SPEC §4.5's validation passes beyond what parsing already enforces:
-/// contiguous contributor revisions, `revision = base[author] + 1`, complete
-/// base closure, acyclicity, and a deterministic replay of the frontier.
-fn validate(repository: &Repository) -> Result<()> {
-    for patch in &repository.patches {
-        let expected = patch
-            .base
-            .get(&patch.author)
-            .checked_add(1)
-            .ok_or_else(|| error::invalid_json("revision overflow"))?;
-        if patch.revision != expected {
-            return Err(error::invalid_json("revision must be base[author] + 1"));
-        }
-        for (id, revision) in patch.base.iter() {
-            if repository.find(id, revision).is_none() {
-                return Err(error::missing_base(&format!("{id}@{revision}")));
-            }
-        }
-    }
-    // Contiguity: revision n must follow n-1 for each contributor (SPEC §3.5).
-    for window in repository.patches.windows(2) {
-        let (a, b) = (&window[0], &window[1]);
-        if a.author == b.author {
-            let next = a
-                .revision
-                .checked_add(1)
-                .ok_or_else(|| error::invalid_json("revision overflow"))?;
-            if b.revision != next {
-                return Err(error::cyclic_history());
-            }
-        }
-    }
-    for patch in &repository.patches {
-        if patch.revision == 1 {
-            continue;
-        }
-        if repository.find(&patch.author, patch.revision - 1).is_none() {
-            return Err(error::cyclic_history());
-        }
-    }
-    // `patches` must be exactly the causal closure of `frontier`, with nothing
-    // unreachable (SPEC §4.1).
-    for patch in &repository.patches {
-        if patch.revision > repository.frontier.get(&patch.author) {
-            // SPEC §4.1: `patches` is exactly the causal closure of
-            // `frontier`, "with no unreachable patches".
-            return Err(error::unreachable_patch(&patch.author, patch.revision));
-        }
-    }
-    for (id, revision) in repository.frontier.iter() {
-        if repository.find(id, revision).is_none() {
-            return Err(error::missing_base(&format!("{id}@{revision}")));
-        }
-    }
-    // Replay proves acyclicity and that every change applies to its base.
-    replay::materialize(repository, &repository.frontier)?;
-    Ok(())
-}
-
-fn current_tree(repository: &Repository) -> Result<Tree> {
-    replay::materialize_tree(repository, &repository.frontier)
 }
 
 // -- init ------------------------------------------------------------------
@@ -256,7 +186,7 @@ fn cmd_config(env: &Env, id: &str, global: bool) -> Result<()> {
 
 fn cmd_status(env: &Env, presentation: Presentation, stdout: &mut dyn Write) -> Result<()> {
     let session = open(env)?;
-    let current = current_tree(&session.repository)?;
+    let current = validate::current_tree(&session.repository)?;
     let working = worktree::scan(&session.root)?;
     let rows = worktree::status(&current, &working);
     write_out(
@@ -343,7 +273,7 @@ fn cmd_commit(
     let author = config::resolve(Some(&session.root), env.home.as_deref())?
         .ok_or_else(error::contributor_required)?;
 
-    let current = current_tree(&session.repository)?;
+    let current = validate::current_tree(&session.repository)?;
     let working = worktree::scan(&session.root)?;
     let changes = changes_between(&current, &working);
     if changes.is_empty() {
@@ -394,9 +324,9 @@ fn author_patch(
 
 fn cmd_diff_working(env: &Env, presentation: Presentation, stdout: &mut dyn Write) -> Result<()> {
     let session = open(env)?;
-    let current = current_tree(&session.repository)?;
+    let current = validate::current_tree(&session.repository)?;
     let working = worktree::scan(&session.root)?;
-    let rendered = render_diff(&current, &working);
+    let rendered = render::unified_diff(&current, &working);
     write_out(stdout, &present::diff(presentation.stdout, &rendered))
 }
 
@@ -411,103 +341,19 @@ fn cmd_diff_versions(
     let session = open(env)?;
     let old_version = Version::parse(old)?;
     let new_version = Version::parse(new)?;
-    let old_tree = known_tree(&session.repository, &old_version)?;
+    let old_tree = validate::known_tree(&session.repository, &old_version)?;
     let new_tree = match repo {
-        None => known_tree(&session.repository, &new_version)?,
+        None => validate::known_tree(&session.repository, &new_version)?,
         Some(operand) => {
             let other = load_operand(env, operand)?;
             // SPEC §7.6: a cross-repository diff must also compare every dot
             // present in both and fail as corrupt if the values differ.
             check_dot_collisions(&session.repository, &other)?;
-            known_tree(&other, &new_version)?
+            validate::known_tree(&other, &new_version)?
         }
     };
-    let rendered = render_diff(&old_tree, &new_tree);
+    let rendered = render::unified_diff(&old_tree, &new_tree);
     write_out(stdout, &present::diff(presentation.stdout, &rendered))
-}
-
-/// Materialize a version, rejecting one the repository does not know
-/// (SPEC §4.1).
-fn known_tree(repository: &Repository, version: &Version) -> Result<Tree> {
-    for (id, revision) in version.iter() {
-        if repository.find(id, revision).is_none() {
-            return Err(error::unknown_version(&version.to_string()));
-        }
-    }
-    replay::materialize_tree(repository, version)
-        .map_err(|_| error::unknown_version(&version.to_string()))
-}
-
-/// Render the plain unified diff of SPEC §7.6.
-fn render_diff(old: &Tree, new: &Tree) -> String {
-    let mut paths: Vec<&String> = old.keys().chain(new.keys()).collect();
-    paths.sort();
-    paths.dedup();
-
-    let mut out = String::new();
-    for path in paths {
-        let before = old.get(path);
-        let after = new.get(path);
-        if before.map(Content::as_ref) == after.map(Content::as_ref) {
-            continue;
-        }
-        let both_text =
-            before.is_none_or(|b| text::is_text(b)) && after.is_none_or(|b| text::is_text(b));
-        let a_label = if before.is_some() {
-            format!("a/{path}")
-        } else {
-            "/dev/null".to_string()
-        };
-        let b_label = if after.is_some() {
-            format!("b/{path}")
-        } else {
-            "/dev/null".to_string()
-        };
-        if !both_text {
-            let _ = writeln!(out, "Binary files {a_label} and {b_label} differ");
-            continue;
-        }
-        let old_text = before.map_or(String::new(), |b| String::from_utf8_lossy(b).to_string());
-        let new_text = after.map_or(String::new(), |b| String::from_utf8_lossy(b).to_string());
-        let old_tokens = text::tokenize(&old_text);
-        let new_tokens = text::tokenize(&new_text);
-        let _ = write!(out, "--- {a_label}\n+++ {b_label}\n");
-        let _ = writeln!(out, "@@ -1,{} +1,{} @@", old_tokens.len(), new_tokens.len());
-        let script = text::diff(&old_tokens, &new_tokens);
-        let mut cursor = 0usize;
-        for op in script.ops() {
-            match op {
-                model::EditOp::Retain(n) => {
-                    for token in &old_tokens[cursor..cursor + *n as usize] {
-                        push_diff_line(&mut out, ' ', token);
-                    }
-                    cursor += *n as usize;
-                }
-                model::EditOp::Delete(n) => {
-                    for token in &old_tokens[cursor..cursor + *n as usize] {
-                        push_diff_line(&mut out, '-', token);
-                    }
-                    cursor += *n as usize;
-                }
-                model::EditOp::Insert(tokens) => {
-                    for token in tokens {
-                        push_diff_line(&mut out, '+', token);
-                    }
-                }
-            }
-        }
-    }
-    out
-}
-
-/// SPEC §7.6: a token without a final LF is followed by LF and the marker.
-fn push_diff_line(out: &mut String, prefix: char, token: &str) {
-    out.push(prefix);
-    out.push_str(token);
-    if !token.ends_with('\n') {
-        out.push('\n');
-        out.push_str("\\ No newline at end of file\n");
-    }
 }
 
 // -- revert ----------------------------------------------------------------
@@ -523,11 +369,11 @@ fn cmd_revert(
     // reverts to an unknown version with no contributor configured and expects
     // to hear about the version.
     let target_version = Version::parse(version)?;
-    let target = known_tree(&session.repository, &target_version)?;
+    let target = validate::known_tree(&session.repository, &target_version)?;
     let author = config::resolve(Some(&session.root), env.home.as_deref())?
         .ok_or_else(error::contributor_required)?;
 
-    let current = current_tree(&session.repository)?;
+    let current = validate::current_tree(&session.repository)?;
     let working = worktree::scan(&session.root)?;
     if !worktree::status(&current, &working).is_empty() {
         return Err(error::working_tree_dirty());
@@ -557,12 +403,12 @@ fn cmd_revert(
 fn load_operand(env: &Env, operand: &str) -> Result<Repository> {
     if operand.starts_with("http://") || operand.starts_with("https://") {
         let body = http::fetch(operand)?;
-        return load(&body);
+        return validate::load(&body);
     }
     let root = env.cwd.join(operand);
     let path = worktree::repository_path(&root);
     let text = std::fs::read_to_string(&path).map_err(|_| error::not_a_repository())?;
-    load(&text)
+    validate::load(&text)
 }
 
 /// SPEC §3.5: the same dot with structurally different patches is corruption.
@@ -585,7 +431,7 @@ fn cmd_merge(
     stderr: &mut dyn Write,
 ) -> Result<()> {
     let session = open(env)?;
-    let current = current_tree(&session.repository)?;
+    let current = validate::current_tree(&session.repository)?;
     let working = worktree::scan(&session.root)?;
     if !worktree::status(&current, &working).is_empty() {
         return Err(error::working_tree_dirty());
@@ -611,7 +457,7 @@ fn cmd_merge(
     merged.frontier = session.repository.frontier.join(&other.frontier);
 
     // SPEC §10: everything is validated and built before anything is written.
-    validate(&merged)?;
+    validate::validate(&merged)?;
     let (target, joined_warnings) = replay::materialize(&merged, &merged.frontier)?;
     let (_, local_warnings) =
         replay::materialize(&session.repository, &session.repository.frontier)?;
