@@ -225,6 +225,53 @@ fn materializing_a_version_ignores_unrelated_patches() {
 }
 
 #[test]
+fn optimized_replay_matches_naive_replay() {
+    // Differential test: the optimized materialize (with memoization and prefix
+    // resume) must produce identical trees and warnings as a naive SPEC §6
+    // replay that rebuilds every base from scratch.
+    for seed in 0..8u64 {
+        let mut rng = Rng(seed.wrapping_mul(3_713_921_321).wrapping_add(31));
+        let sandbox = Sandbox::new();
+        ok(&sandbox.env("."), &["init", "seed"]);
+        let seed_env = sandbox.env("seed");
+        ok(&seed_env, &["config", "contributor.id", "seed@x"]);
+        sandbox.write("seed/alpha.txt", "a\nb\nc\n");
+        ok(&seed_env, &["commit", "base"]);
+
+        let replicas = ["r0", "r1", "r2"];
+        for (index, replica) in replicas.iter().enumerate() {
+            copy_tree(&sandbox.path("seed"), &sandbox.path(replica));
+            let env = sandbox.env(replica);
+            ok(&env, &["config", "contributor.id", &format!("c{index}@x")]);
+            for round in 0..=rng.below(3) {
+                random_commit(&sandbox, replica, &mut rng, round);
+            }
+        }
+
+        // Merge in one order to get a single repository with concurrency.
+        copy_tree(&sandbox.path("r0"), &sandbox.path("merged"));
+        let merged_env = sandbox.env("merged");
+        ok(&merged_env, &["merge", "../r1"]);
+        ok(&merged_env, &["merge", "../r2"]);
+
+        let repo = repository_at(&sandbox, "merged");
+        let frontier = repo.frontier.clone();
+        let (opt_tree, opt_warn) = replay::materialize(&repo, &frontier).unwrap();
+        let (naive_tree, naive_warn) = replay::naive_materialize(&repo, &frontier).unwrap();
+        assert_eq!(opt_tree, naive_tree, "seed {seed}: tree mismatch");
+        assert_eq!(opt_warn, naive_warn, "seed {seed}: warnings mismatch");
+
+        // Also check at the sub-version level: materialize a proper prefix
+        // and confirm it matches the naive version.
+        if let Some(sub) = repo.patches.first().map(snap::model::Patch::result) {
+            let (opt_sub, _) = replay::materialize(&repo, &sub).unwrap();
+            let (naive_sub, _) = replay::naive_materialize(&repo, &sub).unwrap();
+            assert_eq!(opt_sub, naive_sub, "seed {seed}: sub-version mismatch");
+        }
+    }
+}
+
+#[test]
 fn version_join_is_a_semilattice_over_random_versions() {
     const IDS: [&str; 4] = ["a@x", "b@x", "c@x", "~@x"];
 

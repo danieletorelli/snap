@@ -133,6 +133,9 @@ pub fn tree_paths_conflict(path: &str) -> Error {
 pub fn cyclic_history() -> Error {
     Error::new("cyclic or incomplete patch history")
 }
+pub fn depth_limit_reached() -> Error {
+    Error::new("base reconstruction depth limit exceeded")
+}
 pub fn missing_base(dot: &str) -> Error {
     err!("cyclic or incomplete patch history: missing {dot}")
 }

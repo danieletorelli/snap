@@ -210,6 +210,12 @@ fn remove_empty_directories(root: &Path, dir: &Path) -> Result<bool> {
 }
 
 /// Replace a file atomically through a same-directory temporary (SPEC §10).
+///
+/// On POSIX, `rename()` is atomic when source and destination are on the same
+/// filesystem.  On Windows, `rename()` fails when the destination already
+/// exists, so we remove first — non-atomic but correct.  SPEC §12 puts
+/// crash recovery out of scope, so the brief window between remove and rename
+/// is acceptable.
 pub fn replace_file(path: &Path, contents: &str) -> Result<()> {
     let parent = path
         .parent()
@@ -219,7 +225,11 @@ pub fn replace_file(path: &Path, contents: &str) -> Result<()> {
     let temporary = parent.join(format!(".{}.tmp", std::process::id()));
     std::fs::write(&temporary, contents)
         .map_err(|e| error::Error::new(format!("cannot write {}: {e}", temporary.display())))?;
-    std::fs::rename(&temporary, path)
-        .map_err(|e| error::Error::new(format!("cannot replace {}: {e}", path.display())))?;
+    if std::fs::rename(&temporary, path).is_err() {
+        // Windows: rename fails when the destination exists.  Remove and retry.
+        let _ = std::fs::remove_file(path);
+        std::fs::rename(&temporary, path)
+            .map_err(|e| error::Error::new(format!("cannot replace {}: {e}", path.display())))?;
+    }
     Ok(())
 }

@@ -170,9 +170,25 @@ pub fn parse_url(raw: &str) -> Result<Url> {
         Scheme::Http => 80,
         Scheme::Https => 443,
     };
-    let (host, port) = match authority.rsplit_once(':') {
-        Some((host, port)) => (host, port.parse::<u16>().map_err(|_| bad())?),
-        None => (authority, default_port),
+    let (host, port) = if authority.starts_with('[') {
+        // IPv6 literal: [::1] or [::1]:8765
+        let close = authority.find(']').ok_or_else(bad)?;
+        let host = &authority[..=close];
+        let rest = &authority[close + 1..];
+        if rest.is_empty() {
+            (host, default_port)
+        } else {
+            let port = rest
+                .strip_prefix(':')
+                .and_then(|p| p.parse::<u16>().ok())
+                .ok_or_else(bad)?;
+            (host, port)
+        }
+    } else {
+        match authority.rsplit_once(':') {
+            Some((host, port)) => (host, port.parse::<u16>().map_err(|_| bad())?),
+            None => (authority, default_port),
+        }
     };
     if host.is_empty() {
         return Err(bad());

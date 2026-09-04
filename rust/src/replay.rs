@@ -69,6 +69,36 @@ pub fn materialize_tree(repo: &Repository, target: &Version) -> Result<Tree> {
     Ok(materialize(repo, target)?.0)
 }
 
+/// Naive SPEC §6 replay without memoization or prefix resume.
+///
+/// Intended for differential testing against the optimized [`materialize`].
+/// Follows the spec literally: order, then integrate each patch against the
+/// tree produced by replaying its own base from scratch.
+pub fn naive_materialize(repo: &Repository, target: &Version) -> Result<(Tree, Warnings)> {
+    let selected = Materializer::new(repo).select(target)?;
+    let ordered = Materializer::order(&selected)?;
+    let mut tree = Tree::new();
+    let mut warnings = Warnings::new();
+    for patch in ordered {
+        let base_tree = naive_tree(repo, &patch.base)?;
+        integrate(patch, &base_tree, &mut tree, &mut warnings)?;
+    }
+    Ok((tree, warnings))
+}
+
+/// Rebuild a base tree from scratch — no memoization, no shortcut.
+fn naive_tree(repo: &Repository, target: &Version) -> Result<Tree> {
+    let selected = Materializer::new(repo).select(target)?;
+    let ordered = Materializer::order(&selected)?;
+    let mut tree = Tree::new();
+    let mut warnings = Warnings::new();
+    for patch in ordered {
+        let base_tree = naive_tree(repo, &patch.base)?;
+        integrate(patch, &base_tree, &mut tree, &mut warnings)?;
+    }
+    Ok(tree)
+}
+
 struct Materializer<'a> {
     repo: &'a Repository,
     /// Memoized version -> tree, shared across the whole invocation so a base
@@ -84,7 +114,7 @@ struct Materializer<'a> {
 /// Guards the fallback recursion for base versions that are not canonical
 /// prefixes. Real histories nest a handful deep; this only trips on
 /// pathological input, and failing beats overflowing the stack.
-const MAX_BASE_DEPTH: usize = 256;
+const MAX_BASE_DEPTH: usize = 4096;
 
 impl<'a> Materializer<'a> {
     fn new(repo: &'a Repository) -> Self {
@@ -206,7 +236,7 @@ impl<'a> Materializer<'a> {
             return Ok(tree.clone());
         }
         if self.depth >= MAX_BASE_DEPTH {
-            return Err(error::cyclic_history());
+            return Err(error::depth_limit_reached());
         }
         self.depth += 1;
         let result = self.build_base_tree(base);
@@ -814,5 +844,43 @@ mod tests {
             kind: ChangeKind::Text(EditScript::new(vec![EditOp::Retain(5)]).unwrap()),
         };
         assert!(authored(&long, &base).is_err(), "consumes past the base");
+    }
+
+    #[test]
+    fn deep_linear_history_replays_beyond_old_depth_limit() {
+        // A 300-patch linear chain exercises base_tree recursion deeper than
+        // the old MAX_BASE_DEPTH=256.  Each patch's base requires materializing
+        // all predecessors, so the recursion depth equals the chain length minus
+        // one.  With the raised limit (4096) this must succeed.
+        let count = 300u64;
+        let mut repo = Repository::default();
+        let mut frontier = Version::empty();
+        for rev in 1..=count {
+            let from = if rev == 1 {
+                String::new()
+            } else {
+                format!("line {}\n", rev - 1)
+            };
+            let to = format!("line {rev}\n");
+            let patch = Patch {
+                author: "a@x".to_string(),
+                revision: rev,
+                base: frontier.clone(),
+                message: format!("r{rev}"),
+                changes: vec![text_change("f.txt", &from, &to)],
+            };
+            frontier = patch.result();
+            repo.patches.push(patch);
+        }
+        repo.sort_patches();
+        repo.frontier = frontier;
+        let (tree, warnings) = crate::replay::materialize(&repo, &repo.frontier).expect("replays");
+        assert_eq!(tree.len(), 1, "one file");
+        assert!(warnings.is_empty(), "no concurrency");
+        let content = tree.get("f.txt").expect("f.txt exists");
+        assert_eq!(
+            std::str::from_utf8(content).unwrap(),
+            format!("line {count}\n")
+        );
     }
 }

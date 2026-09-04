@@ -152,3 +152,31 @@ fn the_snapshot_is_immutable_once_serving() {
     let second = http::fetch(&url).expect("second");
     assert_eq!(first, second);
 }
+
+#[test]
+fn parse_url_ipv6_literal_with_port() {
+    let url = http::parse_url("http://[::1]:8765/").unwrap();
+    assert_eq!(url.host, "[::1]");
+    assert_eq!(url.port, 8765);
+}
+
+#[test]
+fn parse_url_ipv6_literal_without_port() {
+    let url = http::parse_url("http://[::1]/").unwrap();
+    assert_eq!(url.host, "[::1]");
+    assert_eq!(url.port, 80);
+}
+
+#[test]
+fn parse_url_ipv6_loopback() {
+    let url = http::parse_url("http://[::1]:3000/repository.json").unwrap();
+    assert_eq!(url.host, "[::1]");
+    assert_eq!(url.port, 3000);
+}
+
+#[test]
+fn parse_url_ipv6_link_local() {
+    let url = http::parse_url("http://[fe80::1]:9000/snapshot").unwrap();
+    assert_eq!(url.host, "[fe80::1]");
+    assert_eq!(url.port, 9000);
+}
