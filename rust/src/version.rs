@@ -126,7 +126,7 @@ impl Version {
     /// which is infallible by signature and is called throughout replay: a
     /// caller who hand-builds a `Patch` with a malformed author gets a version
     /// carrying that author rather than a panic. Such a patch cannot reach
-    /// disk, because `Patch::from_json` and `cli::validate` both reject it.
+    /// disk, because `Patch::from_json` and `validate::validate` both reject it.
     pub(crate) fn set_unchecked(&mut self, id: &str, revision: u64) {
         match self
             .entries

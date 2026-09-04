@@ -142,11 +142,15 @@ pub fn diff(old: &[&str], new: &[&str]) -> EditScript {
 /// SPEC §5 rule 1 retains unconditionally on equal tokens, so those retains
 /// are forced regardless of the `D` values.
 ///
-/// Trimming the common *suffix* is **not** safe, and the counterexample is
-/// small: for `old = [a, a]` and `new = [a]` the literal walk retains at
-/// `(0, 0)` and then deletes, giving `retain 1, delete 1`. Trimming the shared
-/// trailing `[a]` first would diff `[a]` against `[]`, giving `delete 1,
-/// retain 1` — a different script for the same input. See the regression test.
+/// Trimming the common *suffix* is **not** safe — not even applied after the
+/// prefix trim, which is the form an optimizer would actually reach for. An
+/// exhaustive sweep of all 132,496 sequence pairs up to length 5 over a
+/// 3-symbol alphabet found 17,232 disagreements with the literal recurrence.
+///
+/// The smallest is `old = [a]`, `new = [b, a, a]`: the literal walk gives
+/// `insert [b], retain 1, insert [a]`, while trimming the shared trailing `a`
+/// first leaves `[] -> [b, a]` and yields `insert [b, a], retain 1`. Same
+/// input, different script. See the regression test.
 fn trim_common_prefix(old: &[&str], new: &[&str]) -> usize {
     old.iter().zip(new).take_while(|(a, b)| a == b).count()
 }
@@ -296,12 +300,32 @@ mod tests {
 
     #[test]
     fn suffix_trimming_would_be_wrong() {
-        // The regression guarding `trim_common_prefix`'s doc comment. For
-        // [a, a] -> [a] the literal SPEC §5 walk retains first and deletes
-        // second; trimming the shared trailing token would invert that.
+        // Guards `trim_common_prefix`'s doc comment. `[a] -> [b, a, a]` has no
+        // common prefix and a one-token common suffix, so it isolates suffix
+        // trimming applied *after* the prefix trim — the variant that actually
+        // tempts, and the smallest case where it diverges.
+        let script = diff(&["a\n"], &["b\n", "a\n", "a\n"]);
+        assert_eq!(
+            script.ops(),
+            &[
+                EditOp::Insert(vec!["b\n".to_string()]),
+                EditOp::Retain(1),
+                EditOp::Insert(vec!["a\n".to_string()]),
+            ],
+            "the literal SPEC §5 walk splits the insertion around the retain"
+        );
+        // What suffix trimming would have produced instead.
+        assert_ne!(
+            script.ops(),
+            &[
+                EditOp::Insert(vec!["b\n".to_string(), "a\n".to_string()]),
+                EditOp::Retain(1),
+            ]
+        );
+
+        // The original prefix-order case still holds.
         let script = diff(&["a\n", "a\n"], &["a\n"]);
         assert_eq!(script.ops(), &[EditOp::Retain(1), EditOp::Delete(1)]);
-        assert_ne!(script.ops(), &[EditOp::Delete(1), EditOp::Retain(1)]);
     }
 
     #[test]

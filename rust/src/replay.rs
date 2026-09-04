@@ -244,19 +244,18 @@ impl<'a> Materializer<'a> {
     /// longest already-memoized canonical prefix of the base's own order and
     /// integrates only what is missing.
     ///
-    /// That is sound by the argument in PLAN.md §4.1: replay greedily takes
-    /// the Snap-minimum ready patch, so for a downward-closed prefix `S` of an
-    /// order the ready set within `S` is a subset of the full ready set at the
-    /// same step, the full replay's pick lies in `S`, and a minimum over a
-    /// superset is no greater than one over a subset — hence replaying `S`
-    /// alone reproduces the prefix. The prefixes here are taken from this
-    /// base's *own* canonical order, so the precondition holds by
-    /// construction.
+    /// This is sound because `order` is a deterministic total sort, so the
+    /// prefixes recorded below are literal prefixes of *this base's own*
+    /// canonical order. Integrating the first `k` patches of that order always
+    /// yields the same tree, whatever else the repository contains, so
+    /// resuming from a memoized prefix and continuing is exactly what a fresh
+    /// replay of the base would have done.
     ///
-    /// Without this, a divergent history costs one full sub-replay per patch:
-    /// the `workloads` benchmark measured 227ms against 5ms for a linear
-    /// history of the same size, because a branch's bases are not canonical
-    /// prefixes of the interleaved order.
+    /// Without it, a divergent history costs one full sub-replay per patch,
+    /// because a branch's bases are not prefixes of the *interleaved* order
+    /// that the top-level replay walks. That was the dominant cost in the
+    /// `divergent` and `text-ot` workloads before this existed; see
+    /// PERFORMANCE.md for current figures.
     fn base_tree(&mut self, base: &Version) -> Result<Rc<Tree>> {
         if let Some(tree) = self.memo.get(base) {
             return Ok(Rc::clone(tree));

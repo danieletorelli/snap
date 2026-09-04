@@ -368,7 +368,7 @@ impl Patch {
     /// Infallible. `Patch` has public fields, so a caller can hand-build one
     /// with a malformed author; that yields a version carrying the malformed
     /// author rather than a panic, and such a patch cannot reach disk because
-    /// `Patch::from_json` and `cli::validate` both reject it.
+    /// `Patch::from_json` and `validate::validate` both reject it.
     #[must_use]
     pub fn result(&self) -> Version {
         let mut result = self.base.clone();

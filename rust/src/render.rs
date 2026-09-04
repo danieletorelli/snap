@@ -1,6 +1,6 @@
 //! Plain-mode rendering of a diff body (SPEC §7.6).
 //!
-//! Kept out of `cmd` so that command code computes values and never formats
+//! Kept out of `cli` so that command code computes values and never formats
 //! them. `present` applies the terminal styling of SPEC §7.11 on top of the
 //! plain bytes this produces.
 

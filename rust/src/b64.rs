@@ -125,8 +125,10 @@ mod tests {
 
     #[test]
     fn rejects_non_canonical_trailing_bits() {
-        // "Zg==" is canonical for b"f"; the low two bits of 'h' are set, so
-        // "Zh==" is a second spelling of the same byte and must be refused.
+        // Two padding characters carry a 12-bit group for a single byte, so the
+        // low 4 bits are unused and must be zero. "Zg==" is the canonical
+        // spelling of b"f"; "Zh==" sets one of those unused bits and decodes to
+        // the same byte, so it is a second spelling and must be refused.
         assert!(decode("Zg==").is_ok());
         assert!(decode("Zh==").is_err());
         assert!(decode("Zm8=").is_ok());

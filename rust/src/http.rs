@@ -32,11 +32,18 @@ pub fn parse_port(raw: Option<&str>) -> Result<u16> {
 
 /// Install handlers so SIGINT and SIGTERM exit 0 (SPEC §7.9).
 ///
-/// The handler calls `_exit`, which is async-signal-safe; the server holds no
-/// lock and owns nothing that needs flushing, because the snapshot was written
-/// to stdout before the accept loop began. Doing anything richer inside a
-/// signal handler — allocating, locking, running destructors — would be
-/// undefined behaviour.
+/// The handler calls `_exit`, which is async-signal-safe, and does nothing
+/// else: the server holds no lock and buffers nothing that a handler would
+/// have to flush, since each response is written and flushed before the next
+/// accept. Allocating, locking, or running destructors inside a signal handler
+/// would be undefined behaviour.
+///
+/// Handlers are installed *before* the startup URL is written, so a signal is
+/// honoured from the earliest moment rather than killing the process with the
+/// default disposition — SPEC §7.9 requires exit 0. The cost is that a signal
+/// delivered in the sliver before the write would exit silently without
+/// printing the URL; no client can have connected by then, so nothing
+/// observes it.
 fn install_signal_handlers() {
     extern "C" fn handler(_signal: libc::c_int) {
         // SAFETY: `_exit` is async-signal-safe and this is the only statement.
