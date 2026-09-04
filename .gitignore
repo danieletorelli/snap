@@ -1,0 +1,5 @@
+# Installed by `npm ci` in the harness and the TypeScript scaffold.
+node_modules/
+
+# macOS directory metadata.
+.DS_Store

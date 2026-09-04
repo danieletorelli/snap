@@ -44,8 +44,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 macro_rules! err {
     ($($arg:tt)*) => { $crate::error::Error::new(format!($($arg)*)) };
 }
-#[allow(unused_imports)]
-pub(crate) use err;
 
 // -- Fixed wording pinned by `stderr_equals` ------------------------------
 
