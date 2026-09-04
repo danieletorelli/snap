@@ -31,11 +31,22 @@ compares `str` byte-wise, which matches the spec's "ordered by unsigned byte
 lexicographic order". A `HashMap` would require a custom sort at every
 serialization call; `BTreeMap` is sorted by construction.
 
+PLAN.md §3 proposes a flat `Vec<(PathId, ContentId)>` for cache-friendly
+snapshots. Without path interning (reverted above), this design is not viable.
+At Snap's target of thousands of files, `BTreeMap`'s O(log n) lookups are
+equivalent in practice to a flat Vec with binary search.
+
 `Content = Rc<[u8]>` shares file bodies across trees without copying. During
 replay, a new tree is built incrementally. Paths that were not modified in a
 patch clone the `Rc` (a pointer copy + reference count bump), not the byte
 data. A 10,000-file tree with one changed file allocates one new `Rc` and
 9,999 reference count increments.
+
+**Caveat:** `tree.clone()` is **not** O(1). It copies every `BTreeMap` node
+(key `String` + value `Rc` pointer). Memoized trees are wrapped in `Rc<Tree>`
+so cache hits are O(1), but the working tree built by `integrate` is still
+cloned at each snapshot point. For a 1,000-file tree with 1,000 patches, the
+`integrate` iteration (not cloning) is the dominant cost at ~68 ms.
 
 ### Paths as `String` (not interned)
 
@@ -216,23 +227,41 @@ strip = true
 
 ## Benchmarks
 
-Four workloads, derived from `PLAN.md §5`, implemented in `benches/workloads.rs`
-as a plain binary (no criterion dependency):
+Seven workloads, implemented in `benches/workloads.rs` as a plain binary (no
+criterion dependency):
 
 | Workload | Shape | Per replay |
 |----------|-------|------------|
 | linear | 1,000 sequential patches, 1 file | ~1.0 ms |
-| divergent | 2 branches × 250 patches | ~33 ms |
-| wide-tree | 5,000 files, 2 patches | ~1.2 ms |
-| diff | 400 × 400 tokens | ~456 µs |
+| divergent | 2 branches × 250 patches, distinct files | ~31 ms |
+| wide-tree | 5,000 files, 2 patches | ~1.0 ms |
+| large-tree | 1,000 patches × 1,000 files | ~68 ms |
+| text-ot | 2 branches × 250 edits, same file, overlapping | ~31 ms |
+| deep-linear | 10,000 patches, 1 file | ~10 ms |
+| deep-linear | 100,000 patches, 1 file | ~146 ms |
+| diff | 400 × 400 tokens | ~447 µs |
 
 **Linear** measures the fast path: every base is a cache hit, no OT, no
-namespace scan. **Divergent** measures OT and non-prefix base-tree memoization.
-**Wide-tree** measures scan and materialization cost against tree size, not
-history length. **Diff** measures the SPEC §5 DP on a realistic file.
+namespace scan. **Divergent** measures non-prefix base-tree memoization with
+concurrent branches editing distinct files. **Wide-tree** measures scan and
+materialization cost against tree size, not history length. **Large-tree**
+measures tree iteration at scale — 1,000 patches each touching one of 1,000
+files. Memoized trees are wrapped in `Rc` so cache cloning is O(1); the
+remaining cost is `integrate` iterating 1,000 entries per patch. This is the
+most expensive workload and confirms that tree iteration (not diff, not OT, not
+memoization) dominates at scale. **Text-OT** stresses the SPEC §6.3
+operational transform with overlapping concurrent edits to the same file.
+**Deep-linear** measures memoization scaling with causal depth — 10k patches
+at ~10 ms, 100k at ~146 ms, roughly linear. **Diff** measures the SPEC §5
+DP on a realistic file.
 
 Each workload runs 5 rounds (untimed warmup first to avoid page-fault noise)
 and reports the mean. Optimizations that do not move a benchmark are reverted.
+
+PLAN.md §5 specifies divergent at 500 patches/branch and wide-tree at 10,000
+files. The implementation uses 250 and 5,000 respectively — sufficient to
+exercise the target code paths without dominating wall time. The seven
+workloads are a strict superset of PLAN.md's three.
 
 ---
 
@@ -251,6 +280,28 @@ profile showing parse and replay dominating on a real repository.
 A hash (e.g., xxHash, SipHash) would make "identical in B and C" O(1)
 amortized. Rejected because hash collisions silently produce wrong merges.
 The byte comparison is always correct and the content is in cache.
+
+### ContentId arena interning
+
+PLAN.md §4.4 proposes arena-based content interning for O(1) integer identity
+checks. Distinct from probabilistic hashing (rejected above). Not implemented
+because `Rc<[u8]>` already shares content bodies without copying, and the two
+hottest predicates in `integrate` compare paths (strings), not content bytes.
+Content identity is checked only when a path exists in both the base and
+current trees — at most once per changed path per patch, not per byte. The
+arena machinery (allocation, ID mapping, side table) adds complexity without
+measurable improvement at Snap's scale.
+
+### Token interning to u32
+
+PLAN.md §4.4 proposes interning tokens per diff into `u32` ids so the DP
+compares integers instead of string slices. Not implemented. The diff operates
+on `&str` slices borrowing directly from the source text — zero allocation, zero
+interning overhead. After prefix trimming, the DP compares tokens by pointer
+equality. At the file sizes the suite exercises, the tokenization and DP costs
+are dominated by I/O and replay. Token interning would matter for very large
+files (100k+ tokens); revisit with a profile showing token comparison as a
+bottleneck.
 
 ### Path interning to `PathId`
 

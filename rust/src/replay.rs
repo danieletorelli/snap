@@ -13,6 +13,7 @@ use crate::version::Version;
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
+use std::rc::Rc;
 
 /// Why a whole concurrent effect was discarded (SPEC §6.4).
 ///
@@ -103,7 +104,7 @@ struct Materializer<'a> {
     repo: &'a Repository,
     /// Memoized version -> tree, shared across the whole invocation so a base
     /// tree is built at most once however often it is referenced.
-    memo: HashMap<Version, Tree>,
+    memo: HashMap<Version, Rc<Tree>>,
     /// Every version referenced as some patch's base. Snapshots are taken only
     /// at these frontiers, so memory stays proportional to distinct bases
     /// rather than to patches x tree size.
@@ -206,7 +207,7 @@ impl<'a> Materializer<'a> {
             if self.referenced.contains(&joined) {
                 self.memo
                     .entry(joined.clone())
-                    .or_insert_with(|| tree.clone());
+                    .or_insert_with(|| Rc::new(tree.clone()));
             }
         }
         Ok((tree, warnings))
@@ -231,9 +232,9 @@ impl<'a> Materializer<'a> {
     /// the `workloads` benchmark measured 227ms against 5ms for a linear
     /// history of the same size, because a branch's bases are not canonical
     /// prefixes of the interleaved order.
-    fn base_tree(&mut self, base: &Version) -> Result<Tree> {
+    fn base_tree(&mut self, base: &Version) -> Result<Rc<Tree>> {
         if let Some(tree) = self.memo.get(base) {
-            return Ok(tree.clone());
+            return Ok(Rc::clone(tree));
         }
         if self.depth >= MAX_BASE_DEPTH {
             return Err(error::depth_limit_reached());
@@ -241,8 +242,8 @@ impl<'a> Materializer<'a> {
         self.depth += 1;
         let result = self.build_base_tree(base);
         self.depth -= 1;
-        let tree = result?;
-        self.memo.insert(base.clone(), tree.clone());
+        let tree = Rc::new(result?);
+        self.memo.insert(base.clone(), Rc::clone(&tree));
         Ok(tree)
     }
 
@@ -263,7 +264,7 @@ impl<'a> Materializer<'a> {
         let mut start = 0;
         for index in (0..ordered.len()).rev() {
             if let Some(memoized) = self.memo.get(&prefixes[index]) {
-                tree = memoized.clone();
+                tree = (**memoized).clone();
                 start = index + 1;
                 break;
             }
@@ -279,7 +280,7 @@ impl<'a> Materializer<'a> {
             if self.referenced.contains(&prefixes[index]) {
                 self.memo
                     .entry(prefixes[index].clone())
-                    .or_insert_with(|| tree.clone());
+                    .or_insert_with(|| Rc::new(tree.clone()));
             }
         }
         Ok(tree)

@@ -1,16 +1,18 @@
-//! The three workloads PLAN.md §5 commits to measuring.
+//! Benchmark workloads for the Snap Rust implementation.
 //!
 //! Run with `cargo bench`. Deliberately a plain binary rather than criterion:
 //! the point is a repeatable number to justify or reject an optimization, not
 //! statistical rigour, and the project carries one runtime dependency by
 //! design.
 //!
-//! * linear history  — 1,000 sequential patches; measures the SPEC §6.2 rule-1
-//!   fast path and base-tree memoization on a canonical prefix.
-//! * divergent history — two branches of 250 patches merged; measures OT and
-//!   the non-prefix base-tree fallback.
-//! * wide tree — 5,000 files, one small patch; measures scan, replay and
-//!   materialization cost against tree size rather than history length.
+//! Workloads:
+//! * linear        — 1,000 sequential patches, 1 file (rule-1 fast path + memo)
+//! * divergent     — 2 branches × 250 patches, distinct files (non-prefix memo)
+//! * wide-tree     — 5,000 files, 2 patches (tree scan cost)
+//! * large-tree    — 1,000 patches × 1,000 files (`BTreeMap` cloning at scale)
+//! * text-ot       — 2 branches × 250 edits, same file, overlapping (OT stress)
+//! * deep-linear   — 10,000 / 100,000 patches, 1 file (depth + memo scaling)
+//! * diff          — 400 × 400 tokens (SPEC §5 DP)
 
 use snap::model::{Change, ChangeKind, Content, Patch, Repository};
 use snap::replay;
@@ -126,6 +128,121 @@ fn wide_tree(count: usize) -> Repository {
     repository
 }
 
+/// `patches` sequential patches over `files` files; each patch rewrites one
+/// file. Measures `BTreeMap` structural cloning cost at scale.
+fn large_tree(patches: u64, files: usize) -> Repository {
+    let mut repository = Repository::default();
+    // Seed the tree with `files` files.
+    let mut changes: Vec<Change> = (0..files)
+        .map(|i| put(&format!("f{i:05}.txt"), "init\n"))
+        .collect();
+    changes.sort_by(|a, b| a.path.cmp(&b.path));
+    let seed = Patch {
+        author: "a@x".to_string(),
+        revision: 1,
+        base: Version::empty(),
+        message: "seed".to_string(),
+        changes,
+    };
+    let mut frontier = seed.result();
+    repository.patches.push(seed);
+
+    // Each subsequent patch touches one file, cycling through the file set.
+    for rev in 2..=patches {
+        let idx = ((rev - 2) as usize) % files;
+        let patch = Patch {
+            author: "a@x".to_string(),
+            revision: rev,
+            base: frontier.clone(),
+            message: format!("r{rev}"),
+            changes: vec![put(&format!("f{idx:05}.txt"), &format!("r{rev}\n"))],
+        };
+        frontier = patch.result();
+        repository.patches.push(patch);
+    }
+    repository.sort_patches();
+    repository.frontier = frontier;
+    repository
+}
+
+/// Two branches of `per_branch` patches editing the same file with overlapping
+/// regions. Forces diff + OT transform + patch application on every merge.
+fn text_ot(per_branch: u64) -> Repository {
+    let mut repository = Repository::default();
+    // Base: 100 lines.
+    let base_text: String = (0..100).fold(String::new(), |mut s, i| {
+        let _ = writeln!(s, "line {i}");
+        s
+    });
+    let root = Patch {
+        author: "root@x".to_string(),
+        revision: 1,
+        base: Version::empty(),
+        message: "base".to_string(),
+        changes: vec![put("doc.txt", &base_text)],
+    };
+    let root_version = root.result();
+    repository.patches.push(root);
+
+    // Alice edits lines 40..50, Bob edits lines 45..55 — overlapping region.
+    for (author, start_line) in [("alice@x", 40u64), ("bob@x", 45u64)] {
+        let mut base = root_version.clone();
+        for rev in 1..=per_branch {
+            let lines: String = (0..100)
+                .map(|i| {
+                    if i >= start_line && i < start_line + 10 {
+                        format!("{author} r{rev} line {i}\n")
+                    } else {
+                        format!("line {i}\n")
+                    }
+                })
+                .collect();
+            let patch = Patch {
+                author: author.to_string(),
+                revision: rev,
+                base: base.clone(),
+                message: format!("{author} r{rev}"),
+                changes: vec![text_change("doc.txt", &base_text, &lines)],
+            };
+            base = patch.result();
+            repository.patches.push(patch);
+        }
+    }
+    repository.sort_patches();
+    repository.frontier = repository
+        .patches
+        .iter()
+        .fold(Version::empty(), |acc, p| acc.join(&p.result()));
+    repository
+}
+
+/// Linear chain of `count` patches, each rewriting one file. Stresses depth
+/// and memoization scaling.
+fn deep_linear(count: u64) -> Repository {
+    let mut repository = Repository::default();
+    let mut frontier = Version::empty();
+    for rev in 1..=count {
+        let from = if rev == 1 {
+            String::new()
+        } else {
+            format!("line {}\n", rev - 1)
+        };
+        let to = format!("line {rev}\n");
+        let patch = Patch {
+            author: "a@x".to_string(),
+            revision: rev,
+            base: frontier.clone(),
+            message: format!("r{rev}"),
+            changes: vec![text_change("f.txt", &from, &to)],
+        };
+        frontier = patch.result();
+        repository.patches.push(patch);
+    }
+    repository.sort_patches();
+    repository.frontier = frontier;
+    repository
+}
+
 fn measure(name: &str, detail: &str, repository: &Repository) {
     // One untimed pass so the measurement is not dominated by first-touch
     // page faults and lazy allocation.
@@ -153,6 +270,18 @@ fn main() {
 
     let wide = wide_tree(5_000);
     measure("wide-tree", "5000 files, 2 patches", &wide);
+
+    let lt = large_tree(1_000, 1_000);
+    measure("large-tree", "1000 patches x 1000 files", &lt);
+
+    let ot = text_ot(250);
+    measure("text-ot", "2 branches x 250 edits, same file", &ot);
+
+    let deep_a = deep_linear(10_000);
+    measure("deep-linear", "10000 patches, 1 file", &deep_a);
+
+    let deep_b = deep_linear(100_000);
+    measure("deep-linear", "100000 patches, 1 file", &deep_b);
 
     // Diff is the other hot path; SPEC §5 is O(n*m) by construction.
     let mut old_text = String::new();
