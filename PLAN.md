@@ -1,5 +1,12 @@
 # Snap — Rust implementation plan
 
+> **Status: implemented.** This is the plan as written before the build, kept
+> for its reasoning. Where the finished code diverges — path interning, the
+> explicit "totally ordered" fast-path check, the diff trimming strategy — the
+> as-built record and the rationale for each divergence are in
+> [`PERFORMANCE.md`](PERFORMANCE.md), which is authoritative for how the
+> implementation actually works.
+
 ## 0. Ground rules
 
 **Full compliance with `SPEC.md` and a green test harness are the bare minimum,
@@ -63,11 +70,13 @@ entry point, and maps its result to an exit code. `run` executes
 `rust/` becomes the default once we start editing it. `verify --lang rust`
 forces it regardless.
 
-**Dependency policy: exactly one runtime dependency, and it is TLS.** Everything
-the acceptance suite exercises is std-only; `https://` (§8.1) is the single
-exception, because §9 makes it a MUST and TLS cannot be hand-rolled
-responsibly. This is not asceticism, it is the shortest path to the strictness
-the spec demands:
+**Dependency policy: keep runtime dependencies to what the platform genuinely
+cannot provide.** As built, that is `libc` (unconditional — SPEC §7.9 needs
+signal handling and `std` exposes no signal API) plus `rustls` and
+`webpki-roots` behind the default-on `tls` feature (§8.1 — SPEC §9 makes
+`https://` a MUST and TLS cannot be hand-rolled responsibly). Everything the
+acceptance suite exercises is std-only. This is not asceticism, it is the
+shortest path to the strictness the spec demands:
 
 - **JSON** — we need duplicate-key rejection (`15-repository-validation` feeds
   `{"format":1,"format":1,...}`), rejection of non-integer numbers, safe-integer

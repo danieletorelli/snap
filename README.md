@@ -20,8 +20,9 @@ conservative plain-output opt-out.
   is narrow; replay, conflict rules, and validation require care.
 - **Prerequisites:** Node.js for the public harness and the toolchain for the
   implementation language. Snap itself uses no API key or network service.
-- **Languages:** TypeScript, Rust, and Scala. Every edition is checked by the
-  same language-neutral suite.
+- **Languages:** Rust today, with scaffolding for TypeScript and Scala. The
+  suite is language-neutral, so any candidate executable can be checked
+  against it.
 
 ## What’s here
 
@@ -29,8 +30,10 @@ conservative plain-output opt-out.
 - [`tests/`](tests/) — language-neutral YAML acceptance tests.
 - [`TEST-HARNESS.md`](TEST-HARNESS.md) and [`test-harness/`](test-harness/) —
   the extensible process/filesystem/HTTP test format and driver.
-- `rust/`, `ts/`, `scala/` — language implementations, each checked by the
-  same language-neutral suite.
+- `rust/` — the implemented edition; passes all 28 acceptance cases.
+- `ts/` — scaffold for a future TypeScript edition, not yet implemented. The
+  launcher also accepts `--lang scala`, though no `scala/` directory is present
+  yet.
 - `run` — the bundled launcher; it selects the most recently modified
   available language implementation, or accepts `--lang`.
 - `verify` — the public acceptance-test entry point.
@@ -40,17 +43,18 @@ conservative plain-output opt-out.
 From the repository root:
 
 ```bash
-./capstones/snap/run init /tmp/example
-./capstones/snap/run config --global contributor.id you@example.com
+snap=$PWD/run                       # absolute: we change directory below
+"$snap" init /tmp/example
+"$snap" config --global contributor.id you@example.com
 cd /tmp/example
 echo hello > hello.txt
-./capstones/snap/run commit "add greeting"
+"$snap" commit "add greeting"
 ```
 
 Choose the bundled implementation language explicitly when needed:
 
 ```bash
-./capstones/snap/run --lang ts --version
+./run --lang rust --version
 ```
 
 The supported surface is:
@@ -76,19 +80,18 @@ staging area, checkout, or unresolved conflicts.
 Run the full language-neutral acceptance suite against your selected workspace:
 
 ```bash
-./capstones/snap/verify --lang ts
+./verify --lang rust
 ```
 
-Replace `ts` with `rust` or `scala` when appropriate. The verifier builds the
-Rust or Scala workspace before running the suite; for TypeScript it installs
-locked dependencies and executes the candidate through `tsx`. Run
-`npm run build` separately when you want a static type-check.
+The verifier builds the Rust workspace before running the suite. `--lang ts`
+and `--lang scala` are accepted by the launcher for future editions; only Rust
+is implemented today.
 
 
 Or test any executable implemented in any language:
 
 ```bash
-./capstones/snap/verify --candidate /path/to/snap
+./verify --candidate /path/to/snap
 ```
 
 The YAML suite creates isolated temporary repositories and checks exact output,

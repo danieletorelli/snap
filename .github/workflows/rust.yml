@@ -26,7 +26,10 @@ jobs:
           workspaces: rust
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test --all-targets
+      # Not --all-targets: that executes the `harness = false` bench binary as
+      # a test, in debug mode, adding seconds per run for zero assertions.
+      # clippy --all-targets above still type-checks benches/.
+      - run: cargo test --lib --bins --tests
 
   coverage:
     name: coverage ratchet

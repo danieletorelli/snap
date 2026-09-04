@@ -180,6 +180,24 @@ invariant, and the code reads as a checklist of the spec. This is a
 correctness-first tradeoff. `validate` is called once per command, not in a
 hot loop.
 
+### Prefix-freeness is checked per patch, in one pass
+
+SPEC §2 requires every tracked tree to be prefix-free by path segment, and
+`integrate` re-checks the authored result of each patch — so unlike `validate`,
+this *is* in the replay loop and its cost scales with tree size.
+
+The check is a single pass over the sorted paths carrying a stack of still-open
+ancestors: pop entries that are no longer string prefixes of the current path,
+then test whether what remains on top is an ancestor at a `/` boundary. O(n)
+after the sort, with no allocation per path.
+
+The tempting cheaper version — compare each sorted path only with its immediate
+neighbour — is **wrong**, and subtly so. Every byte below `/` (0x2F) sorts
+between a path and its own descendants, so for `["x", "x-y", "x/z"]` neither
+adjacent pair is a parent/child even though `x` and `x/z` conflict. The stack
+scan is checked against an obviously-correct reference implementation over
+every subset of a 10-path alphabet chosen to include those separators.
+
 ---
 
 ## Serialization
@@ -232,14 +250,14 @@ criterion dependency):
 
 | Workload | Shape | Per replay |
 |----------|-------|------------|
-| linear | 1,000 sequential patches, 1 file | ~1.0 ms |
-| divergent | 2 branches × 250 patches, distinct files | ~31 ms |
+| linear | 1,000 sequential patches, 1 file | ~0.92 ms |
+| divergent | 2 branches × 250 patches, distinct files | ~19 ms |
 | wide-tree | 5,000 files, 2 patches | ~1.0 ms |
 | large-tree | 1,000 patches × 1,000 files | ~68 ms |
-| text-ot | 2 branches × 250 edits, same file, overlapping | ~31 ms |
-| deep-linear | 10,000 patches, 1 file | ~10 ms |
-| deep-linear | 100,000 patches, 1 file | ~146 ms |
-| diff | 400 × 400 tokens | ~447 µs |
+| text-ot | 2 branches × 250 edits, same file, overlapping | ~18 ms |
+| deep-linear | 10,000 patches, 1 file | ~8.3 ms |
+| deep-linear | 100,000 patches, 1 file | ~123 ms |
+| diff | 400 × 400 tokens | ~433 µs |
 
 **Linear** measures the fast path: every base is a cache hit, no OT, no
 namespace scan. **Divergent** measures non-prefix base-tree memoization with
@@ -252,11 +270,33 @@ most expensive workload and confirms that tree iteration (not diff, not OT, not
 memoization) dominates at scale. **Text-OT** stresses the SPEC §6.3
 operational transform with overlapping concurrent edits to the same file.
 **Deep-linear** measures memoization scaling with causal depth — 10k patches
-at ~10 ms, 100k at ~146 ms, roughly linear. **Diff** measures the SPEC §5
+at ~8.3 ms, 100k at ~123 ms, roughly linear. **Diff** measures the SPEC §5
 DP on a realistic file.
 
 Each workload runs 5 rounds (untimed warmup first to avoid page-fault noise)
 and reports the mean. Optimizations that do not move a benchmark are reverted.
+
+Numbers are release builds on an Apple-silicon laptop and are meaningful only
+relative to each other. The first run after a build is 2–3x slower on the short
+workloads — cold caches, not a regression — so compare warm runs.
+
+Two changes moved these figures materially against the previous revision:
+
+- **`Patch::result` no longer validates.** It is called throughout replay, and
+  re-running `validate_contributor_id` on every call cost 9–17% on the
+  concurrency-heavy and deep workloads. Validation stays on the public
+  `Version::set`; `result` uses the unchecked setter.
+- **`order` decorates before sorting.** The comparator previously called
+  `Patch::result` on both sides, allocating a `Version` per comparison —
+  O(n log n) allocations, several million on the 100k workload. Computing each
+  result once and sorting the decorated pairs cut `divergent` and `text-ot` by
+  a further ~27%.
+
+`large-tree` moved the other way, by about 2%: `check_prefix_free` now tests
+each path against its ancestor prefixes rather than only its sorted neighbour.
+That is a correctness fix, not a tuning choice — the neighbour scan missed
+conflicts whenever a sibling sorted between a path and its descendants — and a
+single-pass stack scan keeps the cost close to the original.
 
 PLAN.md §5 specifies divergent at 500 patches/branch and wide-tree at 10,000
 files. The implementation uses 250 and 5,000 respectively — sufficient to

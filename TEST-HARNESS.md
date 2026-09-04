@@ -368,9 +368,9 @@ leave children behind.
 Public entry point:
 
 ```bash
-./capstones/snap/verify
-./capstones/snap/verify --lang ts|rust|scala
-./capstones/snap/verify --candidate /absolute/or/relative/path/to/snap
+./verify
+./verify --lang ts|rust|scala
+./verify --candidate /absolute/or/relative/path/to/snap
 ```
 
 Options:
@@ -386,7 +386,7 @@ Options:
 --list             validate and list tests without running
 ```
 
-With no candidate, the harness uses `capstones/snap/run`, which selects the
+With no candidate, the harness uses the repository root `run`, which selects the
 most recently modified available bundled implementation. `--lang` selects a
 specific bundled implementation, while `--candidate` remains the
 language-neutral path for any independently built executable; the two options
@@ -399,7 +399,7 @@ responsible for providing its executable.
 ## Implementation layout
 
 ```text
-capstones/snap/
+.                     # repository root
   TEST-HARNESS.md
   tests/
   run_tests

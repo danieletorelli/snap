@@ -28,16 +28,16 @@ their meaning.
 After implementation changes, run the shared acceptance suite:
 
 ```bash
-./capstones/snap/verify --lang ts
+./verify --lang rust
 ```
 
-Replace `ts` with `rust` or `scala` when appropriate.
+Rust is the implemented language in this repository.
 
 
 After harness changes, also run:
 
 ```bash
-cd capstones/snap/test-harness
+cd test-harness
 npm run check
 npm test
 ```
