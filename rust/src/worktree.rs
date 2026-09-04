@@ -211,11 +211,17 @@ fn remove_empty_directories(root: &Path, dir: &Path) -> Result<bool> {
 
 /// Replace a file atomically through a same-directory temporary (SPEC §10).
 ///
-/// On POSIX, `rename()` is atomic when source and destination are on the same
-/// filesystem.  On Windows, `rename()` fails when the destination already
-/// exists, so we remove first — non-atomic but correct.  SPEC §12 puts
-/// crash recovery out of scope, so the brief window between remove and rename
-/// is acceptable.
+/// `std::fs::rename` replaces an existing destination on every platform Snap
+/// targets: POSIX `rename(2)` is atomic within a filesystem, and Windows uses
+/// `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`, which std documents as
+/// behaving "the same as Unix" on Windows 10 1607 and above. The temporary
+/// lives in the destination directory so the two are never on different
+/// filesystems.
+///
+/// There is deliberately no remove-then-retry fallback. It would guard against
+/// nothing — the overwrite already works — while turning any rename failure
+/// (a permission problem, a sharing violation) into the deletion of a
+/// repository that is otherwise still intact.
 pub fn replace_file(path: &Path, contents: &str) -> Result<()> {
     let parent = path
         .parent()
@@ -225,11 +231,14 @@ pub fn replace_file(path: &Path, contents: &str) -> Result<()> {
     let temporary = parent.join(format!(".{}.tmp", std::process::id()));
     std::fs::write(&temporary, contents)
         .map_err(|e| error::Error::new(format!("cannot write {}: {e}", temporary.display())))?;
-    if std::fs::rename(&temporary, path).is_err() {
-        // Windows: rename fails when the destination exists.  Remove and retry.
-        let _ = std::fs::remove_file(path);
-        std::fs::rename(&temporary, path)
-            .map_err(|e| error::Error::new(format!("cannot replace {}: {e}", path.display())))?;
+    if let Err(e) = std::fs::rename(&temporary, path) {
+        // Leave no stray file behind: `.snap/` is asserted exactly by the
+        // acceptance suite, and the caller may retry.
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error::Error::new(format!(
+            "cannot replace {}: {e}",
+            path.display()
+        )));
     }
     Ok(())
 }
