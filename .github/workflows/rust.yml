@@ -1,0 +1,65 @@
+name: snap (rust)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    name: fmt, clippy, unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: capstones/snap/rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: capstones/snap/rust
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --all-targets
+
+  coverage:
+    name: coverage ratchet
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: capstones/snap/rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: capstones/snap/rust
+      - name: Measure coverage
+        # `--tests` includes the integration binaries; `--lib` alone reports
+        # cli/worktree/http as uncovered because their tests live in tests/.
+        # The floor is a ratchet against erosion, set just under the current
+        # 92.5%; raise it when coverage rises, never lower it to pass.
+        run: cargo llvm-cov --tests --fail-under-lines 90 --summary-only
+
+  acceptance:
+    name: language-neutral acceptance suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: capstones/snap/rust
+      - name: Run the 28 YAML acceptance cases
+        run: ./verify --lang rust
+        working-directory: capstones/snap
