@@ -107,11 +107,27 @@ impl Version {
     }
 
     /// Set a component, inserting or removing to preserve the invariant.
+    ///
+    /// Validates the id and revision. Use [`Version::set_unchecked`] on a path
+    /// where both are already known good and a failure would have nowhere to go.
     pub fn set(&mut self, id: &str, revision: u64) -> Result<()> {
         validate_contributor_id(id)?;
         if revision > MAX_REVISION {
             return Err(error::invalid_version(id));
         }
+        self.set_unchecked(id, revision);
+        Ok(())
+    }
+
+    /// Set a component without validating the id or revision.
+    ///
+    /// The sorted, nonzero-only invariant is still upheld — only the *value*
+    /// checks are skipped. This exists for [`crate::model::Patch::result`],
+    /// which is infallible by signature and is called throughout replay: a
+    /// caller who hand-builds a `Patch` with a malformed author gets a version
+    /// carrying that author rather than a panic. Such a patch cannot reach
+    /// disk, because `Patch::from_json` and `cli::validate` both reject it.
+    pub(crate) fn set_unchecked(&mut self, id: &str, revision: u64) {
         match self
             .entries
             .binary_search_by(|probe| probe.0.as_ref().cmp(id))
@@ -129,7 +145,6 @@ impl Version {
                 }
             }
         }
-        Ok(())
     }
 
     /// Componentwise maximum (SPEC §3.3).

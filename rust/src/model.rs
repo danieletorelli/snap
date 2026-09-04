@@ -64,17 +64,43 @@ pub fn validate_message(message: &str) -> Result<()> {
 /// SPEC §2: a tracked tree is prefix-free by path segment — if `a` is a file,
 /// no `a/...` may be present.
 pub fn check_prefix_free<'a>(paths: impl Iterator<Item = &'a str>) -> Result<()> {
-    let sorted: Vec<&str> = {
-        let mut v: Vec<&str> = paths.collect();
-        v.sort_unstable();
-        v
-    };
-    for pair in sorted.windows(2) {
-        let (a, b) = (pair[0], pair[1]);
-        // Sorted order puts `a` immediately before any `a/...` descendant.
-        if b.len() > a.len() && b.as_bytes()[a.len()] == b'/' && b.starts_with(a) {
-            return Err(error::tree_paths_conflict(b));
+    let mut sorted: Vec<&str> = paths.collect();
+    sorted.sort_unstable();
+    // For each path, look for an ancestor of it in the set.
+    //
+    // Checking only *adjacent* sorted pairs is not enough, and the bug it hides
+    // is easy to miss: every byte below `/` (0x2F) sorts between a path and its
+    // own descendants, so an unrelated sibling can separate them. For
+    // ["x", "x-y", "x/z"] the sorted order is exactly that, and neither
+    // adjacent pair is a parent/child — yet `x` and `x/z` do conflict.
+    //
+    // Testing each path against its ancestor prefixes instead is complete
+    // regardless of what sorts in between. Only paths containing `/` can have
+    // an ancestor, and the separator count is the path depth, so this stays
+    // O(n log n) for the shallow trees that dominate in practice.
+    // Single pass with a stack of still-open ancestors. In sorted order every
+    // possible ancestor of a path precedes it, so the stack holds exactly the
+    // chain of string-prefixes still in scope. Popping what is no longer a
+    // prefix leaves the nearest candidate on top; if that candidate is an
+    // ancestor *by segment*, the tree is not prefix-free.
+    let mut open: Vec<&str> = Vec::new();
+    for path in &sorted {
+        while let Some(top) = open.last() {
+            if path.starts_with(*top) {
+                break;
+            }
+            open.pop();
         }
+        if let Some(top) = open.last() {
+            // `top` is a string prefix; it is an ancestor only at a separator.
+            // The length guard also covers `path == top`: callers pass unique
+            // paths today, but indexing at `top.len()` would panic on a
+            // duplicate and this is a public function.
+            if path.len() > top.len() && path.as_bytes()[top.len()] == b'/' {
+                return Err(error::tree_paths_conflict(path));
+            }
+        }
+        open.push(path);
     }
     Ok(())
 }
@@ -338,12 +364,15 @@ impl Patch {
     }
 
     /// SPEC §4.2: `result = base with result[author] = revision`.
+    ///
+    /// Infallible. `Patch` has public fields, so a caller can hand-build one
+    /// with a malformed author; that yields a version carrying the malformed
+    /// author rather than a panic, and such a patch cannot reach disk because
+    /// `Patch::from_json` and `cli::validate` both reject it.
     #[must_use]
     pub fn result(&self) -> Version {
         let mut result = self.base.clone();
-        result
-            .set(&self.author, self.revision)
-            .expect("validated at construction");
+        result.set_unchecked(&self.author, self.revision);
         result
     }
 
@@ -603,6 +632,86 @@ mod tests {
         assert!(check_prefix_free(["a/b/c", "a/b"].into_iter()).is_err());
     }
 
+    /// Obviously-correct reference: for every path, test every ancestor prefix
+    /// for membership. O(n * depth) with a set lookup, no ordering assumptions.
+    fn prefix_free_reference(paths: &[&str]) -> bool {
+        let all: std::collections::HashSet<&str> = paths.iter().copied().collect();
+        for path in paths {
+            for (index, byte) in path.bytes().enumerate() {
+                if byte == b'/' && all.contains(&path[..index]) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    #[test]
+    fn prefix_free_check_tolerates_duplicate_paths() {
+        // A public function must not panic on input a caller can construct.
+        assert!(check_prefix_free(["a", "a"].into_iter()).is_ok());
+        assert!(check_prefix_free(["a/b", "a/b", "a/b"].into_iter()).is_ok());
+        assert!(check_prefix_free(["a", "a", "a/b"].into_iter()).is_err());
+    }
+
+    #[test]
+    fn prefix_free_stack_scan_matches_the_reference_exhaustively() {
+        // The stack scan relies on sorted order putting every ancestor before
+        // its descendants, and on popping leaving the nearest candidate on top.
+        // That reasoning is subtle enough to be worth proving rather than
+        // asserting: this sweeps every subset of an alphabet chosen to include
+        // the separators that sort below `/` and the near-miss prefixes.
+        const ALPHABET: [&str; 10] = [
+            "x", "x/z", "x/z/w", "x-y", "x.y", "xy", "y", "y/x", "a", "a/b",
+        ];
+        let mut checked = 0usize;
+        for mask in 0u32..(1 << ALPHABET.len()) {
+            let subset: Vec<&str> = (0..ALPHABET.len())
+                .filter(|i| mask & (1 << i) != 0)
+                .map(|i| ALPHABET[i])
+                .collect();
+            let expected = prefix_free_reference(&subset);
+            let actual = check_prefix_free(subset.iter().copied()).is_ok();
+            assert_eq!(
+                actual, expected,
+                "disagreement on {subset:?}: stack scan said ok={actual}"
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, 1 << ALPHABET.len());
+    }
+
+    #[test]
+    fn prefix_free_check_sees_past_an_intervening_sibling() {
+        // Regression: an adjacent-pair scan misses this. Every byte below `/`
+        // (0x2F) sorts between a path and its descendants, so "x-y" lands
+        // between "x" and "x/z" and hides the conflict from a windows(2) scan.
+        let mut order = vec!["x", "x-y", "x/z"];
+        order.sort_unstable();
+        assert_eq!(
+            order,
+            ["x", "x-y", "x/z"],
+            "the sibling really does separate them"
+        );
+
+        assert!(check_prefix_free(["x", "x/z"].into_iter()).is_err());
+        assert!(
+            check_prefix_free(["x", "x-y", "x/z"].into_iter()).is_err(),
+            "the same conflict must still be caught when separated"
+        );
+        // Every byte below '/' behaves the same way.
+        for sep in [
+            "x!y", "x#y", "x$y", "x%y", "x&y", "x(y", "x+y", "x,y", "x.y",
+        ] {
+            assert!(
+                check_prefix_free(["x", sep, "x/z"].into_iter()).is_err(),
+                "separator {sep:?} must not hide the conflict"
+            );
+        }
+        // A deeper ancestor must be found too.
+        assert!(check_prefix_free(["a", "a-x", "a/b/c"].into_iter()).is_err());
+    }
+
     // -- SPEC §4.2 messages ------------------------------------------------
 
     #[test]
@@ -765,6 +874,34 @@ mod tests {
         };
         let reparsed = Repository::from_json_str(&repo.to_canonical_string()).unwrap();
         assert_eq!(reparsed, repo);
+    }
+
+    #[test]
+    fn result_does_not_panic_on_a_hand_built_invalid_patch() {
+        // `Patch` has public fields, so a library caller can construct one the
+        // parser would have rejected. `result()` is infallible by signature, so
+        // it must degrade rather than abort the process (exit code 2).
+        let patch = Patch {
+            author: "not-an-email".to_string(),
+            revision: 1,
+            base: Version::empty(),
+            message: "hand built".to_string(),
+            changes: vec![Change {
+                path: "f".into(),
+                kind: ChangeKind::Delete,
+            }],
+        };
+        assert_eq!(patch.result().get("not-an-email"), 1);
+
+        // And such a patch still cannot round-trip through the reader.
+        let repo = Repository {
+            frontier: patch.result(),
+            patches: vec![patch],
+        };
+        assert!(
+            Repository::from_json_str(&repo.to_canonical_string()).is_err(),
+            "a malformed author must not survive serialization"
+        );
     }
 
     #[test]
