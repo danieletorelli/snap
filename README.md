@@ -29,7 +29,8 @@ conservative plain-output opt-out.
 - [`tests/`](tests/) — language-neutral YAML acceptance tests.
 - [`TEST-HARNESS.md`](TEST-HARNESS.md) and [`test-harness/`](test-harness/) —
   the extensible process/filesystem/HTTP test format and driver.
-- `<language>/` — the selected scaffold's location in an attendee archive.
+- `rust/`, `ts/`, `scala/` — language implementations, each checked by the
+  same language-neutral suite.
 - `run` — the bundled launcher; it selects the most recently modified
   available language implementation, or accepts `--lang`.
 - `verify` — the public acceptance-test entry point.
@@ -43,7 +44,7 @@ From the repository root:
 ./capstones/snap/run config --global contributor.id you@example.com
 cd /tmp/example
 echo hello > hello.txt
-/path/to/ai-workshop/capstones/snap/run commit "add greeting"
+./capstones/snap/run commit "add greeting"
 ```
 
 Choose the bundled implementation language explicitly when needed:
