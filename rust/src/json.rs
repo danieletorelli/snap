@@ -91,6 +91,7 @@ pub fn parse(input: &str) -> Result<Json> {
     let mut p = Parser {
         bytes: input.as_bytes(),
         pos: 0,
+        depth: 0,
     };
     p.skip_whitespace();
     let value = p.value()?;
@@ -101,9 +102,25 @@ pub fn parse(input: &str) -> Result<Json> {
     Ok(value)
 }
 
+/// Maximum container nesting accepted while parsing.
+///
+/// The parser is recursive descent, so nesting depth is stack depth: without a
+/// bound, `[[[[...` aborts the process with a stack overflow rather than
+/// failing cleanly, which SPEC §10 forbids (expected errors exit 1). That input
+/// is reachable from a corrupt `.snap/repository.json` *and* from any
+/// `http://` repository operand, so a hostile server could otherwise crash the
+/// client.
+///
+/// A repository value nests at most eight deep — root object, `patches` array,
+/// patch object, `changes` array, change object, `edit` array, operation
+/// object, `insert` array — so 64 leaves a wide margin while keeping the stack
+/// bounded.
+const MAX_DEPTH: usize = 64;
+
 struct Parser<'a> {
     bytes: &'a [u8],
     pos: usize,
+    depth: usize,
 }
 
 impl Parser<'_> {
@@ -142,6 +159,18 @@ impl Parser<'_> {
         }
     }
 
+    fn enter(&mut self) -> Result<()> {
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            return Err(error::invalid_json("nesting is too deep"));
+        }
+        Ok(())
+    }
+
+    fn leave(&mut self) {
+        self.depth -= 1;
+    }
+
     fn value(&mut self) -> Result<Json> {
         match self.peek() {
             Some(b'{') => self.object(),
@@ -160,11 +189,13 @@ impl Parser<'_> {
     }
 
     fn object(&mut self) -> Result<Json> {
+        self.enter()?;
         self.expect(b'{')?;
         let mut fields: Vec<(String, Json)> = Vec::new();
         self.skip_whitespace();
         if self.peek() == Some(b'}') {
             self.pos += 1;
+            self.leave();
             return Ok(Json::Obj(fields));
         }
         loop {
@@ -186,6 +217,7 @@ impl Parser<'_> {
                 Some(b',') => self.pos += 1,
                 Some(b'}') => {
                     self.pos += 1;
+                    self.leave();
                     return Ok(Json::Obj(fields));
                 }
                 _ => return Err(error::invalid_json("expected ',' or '}'")),
@@ -194,11 +226,13 @@ impl Parser<'_> {
     }
 
     fn array(&mut self) -> Result<Json> {
+        self.enter()?;
         self.expect(b'[')?;
         let mut items = Vec::new();
         self.skip_whitespace();
         if self.peek() == Some(b']') {
             self.pos += 1;
+            self.leave();
             return Ok(Json::Arr(items));
         }
         loop {
@@ -209,6 +243,7 @@ impl Parser<'_> {
                 Some(b',') => self.pos += 1,
                 Some(b']') => {
                     self.pos += 1;
+                    self.leave();
                     return Ok(Json::Arr(items));
                 }
                 _ => return Err(error::invalid_json("expected ',' or ']'")),
@@ -435,6 +470,42 @@ mod tests {
         for text in ["1.5", "1e3", "1E3", "1.0", "-0.5"] {
             assert!(parse(text).is_err(), "{text} should be rejected");
         }
+    }
+
+    #[test]
+    fn rejects_nesting_deeper_than_the_limit() {
+        // Regression: the parser is recursive descent, so unbounded nesting
+        // overflowed the stack and aborted the process (SIGABRT), instead of
+        // the exit-1 that SPEC §10 requires for an expected error. Reachable
+        // from a corrupt `.snap/repository.json` and from any `http://`
+        // operand, so a hostile server could crash the client.
+        let ok = format!("{}{}", "[".repeat(MAX_DEPTH), "]".repeat(MAX_DEPTH));
+        assert!(parse(&ok).is_ok(), "exactly at the limit must still parse");
+
+        for depth in [MAX_DEPTH + 1, 1_000, 100_000] {
+            let deep = format!("{}{}", "[".repeat(depth), "]".repeat(depth));
+            let err = parse(&deep).expect_err("must be rejected, not abort");
+            assert!(
+                err.detail().contains("too deep"),
+                "depth {depth}: {}",
+                err.detail()
+            );
+        }
+        // Objects nest through a different code path.
+        let deep_obj = format!("{}1{}", "{\"a\":".repeat(1_000), "}".repeat(1_000));
+        assert!(parse(&deep_obj).is_err());
+    }
+
+    #[test]
+    fn a_real_repository_value_stays_well_inside_the_limit() {
+        // The bound is only safe if legitimate documents never approach it.
+        let repository = r#"{"format":1,"frontier":[["a@x",1]],"patches":[
+            {"author":"a@x","revision":1,"base":[],"message":"m","changes":[
+              {"type":"text","path":"f","edit":[{"insert":["x\n"]}]}]}]}"#;
+        assert!(parse(repository).is_ok());
+        // Deepest chain: root > patches > patch > changes > change > edit >
+        // op > insert = 8 containers, so the limit leaves a wide margin.
+        const { assert!(MAX_DEPTH >= 8 * 4) };
     }
 
     #[test]
