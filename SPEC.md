@@ -192,6 +192,12 @@ two-space indentation and a trailing LF so repositories remain pleasant to
 inspect.
 
 Unknown fields, non-integer numbers, and invalid typed values are errors.
+A reader MAY also reject a document whose containers nest more deeply than an
+implementation-defined bound, provided that bound is at least 32; a repository
+value nests at most eight deep, so no valid repository is affected. This keeps
+a recursive reader from being driven into a stack overflow by hostile input,
+which §10 does not permit: that is an expected error and MUST exit 1.
+
 `patches` contains exactly the causal closure of `frontier`, sorted by author
 and then numeric revision, with no unreachable patches.
 
