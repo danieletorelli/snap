@@ -1,0 +1,67 @@
+[package]
+name = "snap"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.82"
+publish = false
+
+[lib]
+name = "snap"
+path = "src/lib.rs"
+
+[[bin]]
+name = "snap"
+path = "src/main.rs"
+
+[dependencies]
+# Signal handling only. SPEC §7.9 requires `--serve` to exit 0 on SIGINT and
+# SIGTERM; the standard library exposes no signal API, so this is unavoidable.
+libc = "0.2"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
+webpki-roots = { version = "0.26", optional = true }
+
+[dev-dependencies]
+rcgen = "0.13"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+
+# `harness = false`: a plain `main` with `std::time::Instant`, so the three
+# workloads in PLAN.md §5 can be measured without adding criterion and its
+# dependency tree to a project that otherwise has one runtime dependency.
+[[bench]]
+name = "workloads"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+panic = "abort"
+
+[lints.rust]
+# `deny`, not `forbid`, so the single signal-handler registration in `http`
+# can opt in with a written justification. Nothing else may.
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# Byte/index arithmetic is pervasive here and the casts are all range-checked.
+cast_possible_truncation = "allow"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# Error constructors and small accessors; the attribute adds noise, not safety.
+must_use_candidate = "allow"
+# `i`, `j`, `n`, `m`, `a`, `b`, `d` are SPEC §5's own notation for the diff
+# recurrence and SPEC §6.3's for the transform. Renaming them to satisfy the
+# lint would make the code harder to audit against the spec, not easier.
+many_single_char_names = "allow"
+# Suggests pulling in the `bytecount` crate; a four-byte scan does not warrant
+# a runtime dependency.
+naive_bytecount = "allow"
+
+[features]
+# SPEC §9 accepts `https://` repository operands, so TLS ships by default.
+# `--no-default-features` builds the std-only core for dependency audit; that
+# build does NOT conform to SPEC §9 and must never be what `verify` tests.
+default = ["tls"]
+tls = ["dep:rustls", "dep:webpki-roots"]
