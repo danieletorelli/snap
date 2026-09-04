@@ -68,11 +68,11 @@ pub fn serve(port: u16, snapshot: &str, out: &mut dyn Write) -> Result<()> {
         .map_err(|e| error::Error::new(format!("cannot read local address: {e}")))?
         .port();
 
+    install_signal_handlers();
+
     writeln!(out, "http://127.0.0.1:{actual}{RESOURCE}")
         .and_then(|()| out.flush())
         .map_err(|e| error::Error::new(format!("cannot write startup URL: {e}")))?;
-
-    install_signal_handlers();
 
     // `flatten` drops failed accepts: one bad connection must not take the
     // server down, and SPEC §7.9 has it serve until a signal arrives.
