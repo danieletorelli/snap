@@ -62,7 +62,7 @@ impl Version {
         Self::default()
     }
 
-    /// Build from unordered pairs, dropping zero revisions.
+    /// Build from unordered pairs, rejecting zero revisions.
     ///
     /// Rejects duplicate ids, invalid ids, and out-of-range revisions.
     pub fn from_pairs(pairs: impl IntoIterator<Item = (String, u64)>) -> Result<Self> {

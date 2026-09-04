@@ -512,9 +512,11 @@ impl Repository {
     /// Restore the sort order `patches` must satisfy. Used when building a
     /// repository in memory; the reader rejects unsorted input instead.
     ///
-    /// Panics on a duplicate dot: SPEC §4.2 gives each dot exactly one patch,
-    /// and a duplicate here means a caller built the union wrongly, which is a
-    /// programming error rather than bad input.
+    /// Sort patches into canonical order by (author, revision).
+    ///
+    /// Callers must ensure no duplicate dots exist before calling — SPEC §4.2
+    /// gives each dot exactly one patch, and a duplicate means the caller built
+    /// the union wrongly.
     pub fn sort_patches(&mut self) {
         self.patches.sort_by(|a, b| {
             a.author
