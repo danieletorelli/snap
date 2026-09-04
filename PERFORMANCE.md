@@ -126,12 +126,19 @@ The diff is the literal SPEC §5 dynamic programming recurrence: O(n × m) in
 the number of old and new tokens. Two provably output-preserving accelerations
 are applied:
 
-1. **Common prefix trimming.** Before entering the DP, skip matching
-   tokens at the start. For a file where 99% of lines are unchanged, this
-   reduces the DP matrix from 10,000 × 10,000 to a small rectangle around
-   the actual changes. Suffix trimming is not safe — a counterexample
-   (`[a, a] → [a]`) shows it would invert the delete/retain order — and is
-   explicitly rejected in the code with a guarding unit test.
+1. **Common prefix trimming.** Before entering the DP, skip matching tokens at
+   the start. This helps only ahead of the first change: an edit at line *k*
+   leaves an `(n − k) × (m − k)` matrix, so a change near the front is cheap
+   and a change in the middle is not.
+
+   Suffix trimming — which is what would actually bound the matrix to a
+   rectangle around the change — **is not safe**, even applied after prefix
+   trimming. An exhaustive sweep of all 132,496 sequence pairs up to length 5
+   over a 3-symbol alphabet found **17,232 disagreements** with the literal
+   SPEC §5 recurrence. The smallest: `["a"] → ["b", "a", "a"]` yields
+   `insert["b"], retain 1, insert["a"]` per the spec but
+   `insert["b", "a"], retain 1` with suffix trimming. It is rejected in the
+   code with a guarding unit test.
 
 2. **Tie-breaking.** When the DP has equal-cost alternatives between delete
    and insert, the greedy walk chooses delete (`D(i+1, j) <= D(i, j+1)`).
@@ -141,10 +148,26 @@ are applied:
    test.
 
 Myers/Hirschberg is permitted by SPEC §5 "only if it produces the same
-script" but was not adopted. The trimmed DP is not the bottleneck at the file
-sizes the suite exercises, and the equivalence proof including the
-deletion-on-tie rule and repeated lines is non-trivial. It is an optional
-later step, gated behind differential testing.
+script" but was not adopted: the equivalence proof including the
+deletion-on-tie rule and repeated lines is non-trivial, and the suffix-trimming
+result above shows how easily a plausible shortcut diverges.
+
+**Known cost, measured.** Because only the prefix is trimmed, the memory and
+time are quadratic in the distance from the first change to the end of the
+file. Changing one line in the middle of a 20,000-line file allocates the full
+10,000 × 10,000 remainder:
+
+| Operation | Time | Peak RSS |
+|---|---|---|
+| Commit a new 20,000-line file (diff against empty) | 0.01 s | 7 MB |
+| Change line 10,000 of that file and re-commit | 4.8 s | 407 MB |
+
+The table is `(n+1)(m+1)` `u32` cells, so cost grows as the square: a 50,000-
+line file with a change in the middle would need roughly 2.5 GB. This is
+inherent to implementing SPEC §5 literally rather than a defect in the
+implementation, and it is the one place where Snap would need Hirschberg's
+linear-space variant — with a differential-equivalence proof — before being
+used on large text files.
 
 ### Operational transform
 
@@ -179,6 +202,15 @@ single loop, but they are separate for clarity: each pass checks one SPEC §4.5
 invariant, and the code reads as a checklist of the spec. This is a
 correctness-first tradeoff. `validate` is called once per command, not in a
 hot loop.
+
+### JSON nesting is bounded
+
+The reader is recursive descent, so container nesting is stack depth. Without a
+bound, `[[[[…` overflowed the stack and aborted the process — exit 134, not the
+exit 1 that SPEC §10 requires for an expected error — and the input is
+reachable from any `http://` operand, so a hostile server could crash the
+client. Nesting is now capped at 64; a repository value nests at most eight
+deep, so legitimate documents are unaffected.
 
 ### Prefix-freeness is checked per patch, in one pass
 
