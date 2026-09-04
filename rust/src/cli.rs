@@ -11,7 +11,7 @@ use crate::model::{
 use crate::present::{self, LogEntry, Mode, Presentation, Success};
 use crate::replay::{self, Warnings};
 use crate::text;
-use crate::version::{validate_contributor_id, Version, MAX_REVISION};
+use crate::version::{validate_contributor_id, Version};
 use crate::{config, http, worktree};
 use std::fmt::Write as _;
 use std::io::Write;
@@ -136,7 +136,12 @@ fn load(text: &str) -> Result<Repository> {
 /// base closure, acyclicity, and a deterministic replay of the frontier.
 fn validate(repository: &Repository) -> Result<()> {
     for patch in &repository.patches {
-        if patch.revision != patch.base.get(&patch.author) + 1 {
+        let expected = patch
+            .base
+            .get(&patch.author)
+            .checked_add(1)
+            .ok_or_else(|| error::invalid_json("revision overflow"))?;
+        if patch.revision != expected {
             return Err(error::invalid_json("revision must be base[author] + 1"));
         }
         for (id, revision) in patch.base.iter() {
@@ -148,8 +153,14 @@ fn validate(repository: &Repository) -> Result<()> {
     // Contiguity: revision n must follow n-1 for each contributor (SPEC §3.5).
     for window in repository.patches.windows(2) {
         let (a, b) = (&window[0], &window[1]);
-        if a.author == b.author && b.revision != a.revision + 1 {
-            return Err(error::cyclic_history());
+        if a.author == b.author {
+            let next = a
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| error::invalid_json("revision overflow"))?;
+            if b.revision != next {
+                return Err(error::cyclic_history());
+            }
         }
     }
     for patch in &repository.patches {
@@ -358,10 +369,10 @@ fn author_patch(
     changes: Vec<Change>,
 ) -> Result<Version> {
     let base = repository.frontier.clone();
-    let revision = base.get(author) + 1;
-    if revision > MAX_REVISION {
-        return Err(error::invalid_json("revision overflow"));
-    }
+    let revision = base
+        .get(author)
+        .checked_add(1)
+        .ok_or_else(|| error::invalid_json("revision overflow"))?;
     if repository.find(author, revision).is_some() {
         return Err(error::patch_collision(author, revision));
     }

@@ -86,7 +86,9 @@ fn to_u64(value: i64) -> Result<u64> {
 }
 
 /// Widen a count for serialization. Revisions and edit counts are bounded by
-/// `MAX_REVISION` (2^53 - 1), so this never wraps.
+/// `MAX_REVISION` (2^53 - 1), well within `i64::MAX` (2^63 - 1), so this
+/// conversion is infallible for any data that passed `EditScript` validation.
+/// A failure here is caught by `catch_unwind` in `main.rs` (exit code 2).
 fn to_i64(value: u64) -> i64 {
     i64::try_from(value).expect("counts are bounded by MAX_REVISION")
 }
