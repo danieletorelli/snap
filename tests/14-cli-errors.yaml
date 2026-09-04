@@ -1,0 +1,85 @@
+format: 1
+name: command grammar and common failures use stable exit channels
+steps:
+  - run:
+      args: [--version]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_matches
+          pattern: '^snap [0-9]+\.[0-9]+\.[0-9]+\n$'
+        - type: stderr_equals
+          value: ""
+  - run:
+      args: [status]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_equals
+          value: "snap: not a Snap repository\n"
+  - run:
+      args: [unknown]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_equals
+          value: "snap: invalid command or arguments\n"
+  - run:
+      args: [init, repo]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: repo
+      args: [config, --global, contributor.id]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_equals
+          value: "snap: invalid command or arguments\n"
+  - run:
+      cwd: repo
+      args: [diff, "()"]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_contains
+          value: "usage: snap diff"
+  - run:
+      cwd: repo
+      args: [diff, "()", "()", ../repo, --repo]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_contains
+          value: "usage: snap diff"
+  - run:
+      cwd: repo
+      args: [revert, "(unknown@x->1)"]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_contains
+          value: unknown version
+  - run:
+      cwd: repo
+      args: [--serve, "65536"]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_equals
+          value: "snap: invalid port: 65536\n"

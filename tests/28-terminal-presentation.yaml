@@ -1,0 +1,211 @@
+format: 1
+name: terminal presentation is colorful readable and explicitly controllable
+env:
+  SNAP_COLOR: always
+steps:
+  - run:
+      args: [init, repo]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "\u001b[32m✓\u001b[0m \u001b[1mInitialized repository\u001b[0m \u001b[36m()\u001b[0m\n"}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: repo
+      args: [config, contributor.id, alice@x]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_equals, value: ""}
+  - write_file: {path: repo/added.txt, text: "context\nold\n"}
+  - write_file: {path: repo/gone.txt, text: "gone\n"}
+  - write_file: {path: repo/modified.txt, text: "before\n"}
+  - run:
+      cwd: repo
+      args: [status]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "\u001b[1mSnap status\u001b[0m  \u001b[36m()\u001b[0m\n\n  \u001b[32m+\u001b[0m added.txt \u001b[2m(added)\u001b[0m\n  \u001b[32m+\u001b[0m gone.txt \u001b[2m(added)\u001b[0m\n  \u001b[32m+\u001b[0m modified.txt \u001b[2m(added)\u001b[0m\n"}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: repo
+      args: [commit, first]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "\u001b[32m✓\u001b[0m \u001b[1mCommitted\u001b[0m \u001b[36m(alice@x->1)\u001b[0m\n"}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: repo
+      args: [status]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "\u001b[1mSnap status\u001b[0m  \u001b[36m(alice@x->1)\u001b[0m\n\n  \u001b[32m✓\u001b[0m Working tree clean\n"}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: repo
+      args: [log]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "\u001b[36m●\u001b[0m \u001b[1mfirst\u001b[0m\n  \u001b[36m(alice@x->1)\u001b[0m \u001b[2mby\u001b[0m \u001b[35malice@x\u001b[0m\n"}
+        - {type: stderr_equals, value: ""}
+  - run:
+      args: [--version]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "\u001b[1msnap 1.0.0\u001b[0m\n"}
+        - {type: stderr_equals, value: ""}
+  - write_file: {path: repo/added.txt, text: "context\nnew\n"}
+  - write_file: {path: repo/new.txt, text: "new\n"}
+  - remove: {path: repo/gone.txt}
+  - write_file: {path: repo/modified.txt, text: "after\n"}
+  - run:
+      cwd: repo
+      args: [status]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "\u001b[1mSnap status\u001b[0m  \u001b[36m(alice@x->1)\u001b[0m\n\n  \u001b[33m~\u001b[0m added.txt \u001b[2m(modified)\u001b[0m\n  \u001b[31m−\u001b[0m gone.txt \u001b[2m(deleted)\u001b[0m\n  \u001b[33m~\u001b[0m modified.txt \u001b[2m(modified)\u001b[0m\n  \u001b[32m+\u001b[0m new.txt \u001b[2m(added)\u001b[0m\n"}
+        - {type: stderr_equals, value: ""}
+  - write_file: {path: repo/gone.txt, text: "gone\n"}
+  - write_file: {path: repo/modified.txt, text: "before\n"}
+  - remove: {path: repo/new.txt}
+  - run:
+      cwd: repo
+      args: [diff]
+      expect:
+        - {type: exit_code, value: 0}
+        - type: stdout_equals
+          value: "\u001b[1m--- a/added.txt\u001b[0m\n\u001b[1m+++ b/added.txt\u001b[0m\n\u001b[36m@@ -1,2 +1,2 @@\u001b[0m\n context\n\u001b[31m-old\u001b[0m\n\u001b[32m+new\u001b[0m\n"
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: repo
+      env: {SNAP_COLOR: never}
+      args: [status]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "version (alice@x->1)\nM added.txt\n"}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: repo
+      env: {SNAP_COLOR: auto, NO_COLOR: "1"}
+      args: [status]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "version (alice@x->1)\nM added.txt\n"}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: repo
+      env: {SNAP_COLOR: null, NO_COLOR: null}
+      args: [status]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "version (alice@x->1)\nM added.txt\n"}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: repo
+      env: {SNAP_COLOR: auto, NO_COLOR: ""}
+      args: [status]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "version (alice@x->1)\nM added.txt\n"}
+        - {type: stderr_equals, value: ""}
+  - run:
+      env: {SNAP_COLOR: sometimes}
+      args: [--version]
+      expect:
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_equals, value: "snap: SNAP_COLOR must be auto, always, or never\n"}
+  - run:
+      args: [unknown]
+      expect:
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_equals, value: "\u001b[31m✗ snap: invalid command or arguments\u001b[0m\n"}
+
+  - write_file: {path: repo/added.txt, text: "context\nold\n"}
+  - write_file: {path: repo/binary.bin, base64: AP8=}
+  - write_file: {path: repo/no-newline.txt, text: tail}
+  - run:
+      cwd: repo
+      args: [diff]
+      expect:
+        - {type: exit_code, value: 0}
+        - type: stdout_equals
+          value: "\u001b[33mBinary files /dev/null and b/binary.bin differ\u001b[0m\n\u001b[1m--- /dev/null\u001b[0m\n\u001b[1m+++ b/no-newline.txt\u001b[0m\n\u001b[36m@@ -1,0 +1,1 @@\u001b[0m\n\u001b[32m+tail\u001b[0m\n\u001b[2m\\ No newline at end of file\u001b[0m\n"
+        - {type: stderr_equals, value: ""}
+  - remove: {path: repo/binary.bin}
+  - remove: {path: repo/no-newline.txt}
+  - write_file: {path: repo/added.txt, text: "context\nnew\n"}
+  - run:
+      cwd: repo
+      args: [commit, second]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "\u001b[32m✓\u001b[0m \u001b[1mCommitted\u001b[0m \u001b[36m(alice@x->2)\u001b[0m\n"}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: repo
+      args: [log]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "\u001b[36m●\u001b[0m \u001b[1msecond\u001b[0m\n  \u001b[36m(alice@x->2)\u001b[0m \u001b[2mby\u001b[0m \u001b[35malice@x\u001b[0m\n\n\u001b[36m●\u001b[0m \u001b[1mfirst\u001b[0m\n  \u001b[36m(alice@x->1)\u001b[0m \u001b[2mby\u001b[0m \u001b[35malice@x\u001b[0m\n"}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: repo
+      args: [revert, "(alice@x->1)"]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "\u001b[32m✓\u001b[0m \u001b[1mReverted\u001b[0m \u001b[36m(alice@x->3)\u001b[0m\n"}
+        - {type: stderr_equals, value: ""}
+  - start:
+      id: plain-url
+      cwd: repo
+      args: [--serve, "0"]
+      ready:
+        stream: stdout
+        pattern: '^http://127\.0\.0\.1:[0-9]+/repository\.json\n'
+  - stop:
+      id: plain-url
+      signal: SIGTERM
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_matches, pattern: '^http://127\.0\.0\.1:[0-9]+/repository\.json\n$'}
+        - {type: stderr_equals, value: ""}
+
+  - run: {args: [init, left], expect: [{type: exit_code, value: 0}]}
+  - run: {args: [init, right], expect: [{type: exit_code, value: 0}]}
+  - run: {cwd: left, args: [config, contributor.id, a@x], expect: [{type: exit_code, value: 0}]}
+  - run: {cwd: right, args: [config, contributor.id, b@x], expect: [{type: exit_code, value: 0}]}
+  - write_file: {path: left/same, text: "left\n"}
+  - write_file: {path: right/same, text: "right\n"}
+  - run: {cwd: left, args: [commit, left], expect: [{type: exit_code, value: 0}]}
+  - run: {cwd: right, args: [commit, right], expect: [{type: exit_code, value: 0}]}
+  - run:
+      cwd: left
+      args: [merge, ../right]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "\u001b[32m✓\u001b[0m \u001b[1mMerged\u001b[0m \u001b[36m(a@x->1,b@x->1)\u001b[0m\n"}
+        - {type: stderr_equals, value: "\u001b[33m⚠\u001b[0m \u001b[33mauto-resolved same: later-create-wins\u001b[0m\n"}
+
+  - run: {args: [init, spaces], expect: [{type: exit_code, value: 0}]}
+  - run: {cwd: spaces, args: [config, contributor.id, spaces@x], expect: [{type: exit_code, value: 0}]}
+  - write_file: {path: "spaces/trailing ", text: "content\n"}
+  - run:
+      cwd: spaces
+      args: [status]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "\u001b[1mSnap status\u001b[0m  \u001b[36m()\u001b[0m\n\n  \u001b[32m+\u001b[0m trailing  \u001b[2m(added)\u001b[0m\n"}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: spaces
+      args: [commit, "message "]
+      expect:
+        - {type: exit_code, value: 0}
+  - run:
+      cwd: spaces
+      args: [log]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "\u001b[36m●\u001b[0m \u001b[1mmessage \u001b[0m\n  \u001b[36m(spaces@x->1)\u001b[0m \u001b[2mby\u001b[0m \u001b[35mspaces@x\u001b[0m\n"}
+        - {type: stderr_equals, value: ""}

@@ -1,0 +1,305 @@
+format: 1
+name: repository validation rejects every malformed layer before mutation
+steps:
+  - run:
+      args: [init, local]
+      expect: [{type: exit_code, value: 0}]
+  - write_file: {path: local/keep, text: "unchanged\n"}
+
+  - write_file:
+      path: local/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [],
+          "patches": [],
+          "unknown": true
+        }
+  - run:
+      cwd: local
+      args: [status]
+      expect:
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_matches, pattern: '^snap: repository has unknown field: unknown\n$'}
+
+  - write_file:
+      path: local/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["b@x", 1], ["a@x", 1]],
+          "patches": []
+        }
+  - run:
+      cwd: local
+      args: [status]
+      expect:
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_matches, pattern: '^snap: .*canonical.*\n$'}
+
+  - write_file:
+      path: local/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 1]],
+          "patches": [
+            {
+              "author": "a@x",
+              "revision": 1.5,
+              "base": [],
+              "message": "fraction",
+              "changes": [{"type": "text", "path": "f", "edit": []}]
+            }
+          ]
+        }
+  - run:
+      cwd: local
+      args: [status]
+      expect:
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_matches, pattern: '^snap: .+positive safe integer\n$'}
+
+  - write_file:
+      path: local/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [],
+          "patches": [
+            {
+              "author": "a@x",
+              "revision": 1,
+              "base": [],
+              "message": "unreachable",
+              "changes": [{"type": "text", "path": "f", "edit": []}]
+            }
+          ]
+        }
+  - run:
+      cwd: local
+      args: [status]
+      expect:
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_matches, pattern: '^snap: unreachable patch: .+\n$'}
+
+  - write_file:
+      path: local/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 1]],
+          "patches": [
+            {
+              "author": "a@x",
+              "revision": 1,
+              "base": [],
+              "message": "",
+              "changes": [{"type": "text", "path": "f", "edit": []}]
+            }
+          ]
+        }
+  - run:
+      cwd: local
+      args: [status]
+      expect:
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_matches, pattern: '^snap: .+message is empty\n$'}
+
+  - write_file:
+      path: local/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 1]],
+          "patches": [
+            {
+              "author": "a@x",
+              "revision": 1,
+              "base": [],
+              "message": "none",
+              "changes": []
+            }
+          ]
+        }
+  - run:
+      cwd: local
+      args: [status]
+      expect:
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_matches, pattern: '^snap: .+changes is empty\n$'}
+
+  - write_file:
+      path: local/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 1]],
+          "patches": [
+            {
+              "author": "a@x",
+              "revision": 1,
+              "base": [],
+              "message": "change field",
+              "changes": [
+                {"type": "put", "path": "f", "content": "YQ==", "extra": 1}
+              ]
+            }
+          ]
+        }
+  - run:
+      cwd: local
+      args: [status]
+      expect:
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_matches, pattern: '^snap: .+unknown field: extra\n$'}
+
+  - write_file:
+      path: local/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 1]],
+          "patches": [
+            {
+              "author": "a@x",
+              "revision": 1,
+              "base": [],
+              "message": "bad op",
+              "changes": [
+                {"type": "text", "path": "f", "edit": [{"retain": 1, "delete": 1}]}
+              ]
+            }
+          ]
+        }
+  - run:
+      cwd: local
+      args: [status]
+      expect:
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_matches, pattern: '^snap: .+must have one operation\n$'}
+
+  - write_file:
+      path: local/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 1]],
+          "patches": [
+            {
+              "author": "a@x",
+              "revision": 1,
+              "base": [],
+              "message": "bad count",
+              "changes": [
+                {"type": "text", "path": "f", "edit": [{"retain": 0}]}
+              ]
+            }
+          ]
+        }
+  - run:
+      cwd: local
+      args: [status]
+      expect:
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_matches, pattern: '^snap: .+positive safe integer\n$'}
+
+  - write_file:
+      path: local/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 1]],
+          "patches": [
+            {
+              "author": "a@x",
+              "revision": 1,
+              "base": [],
+              "message": "empty insert",
+              "changes": [
+                {"type": "text", "path": "f", "edit": [{"insert": []}]}
+              ]
+            }
+          ]
+        }
+  - run:
+      cwd: local
+      args: [status]
+      expect:
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_matches, pattern: '^snap: .+insert is empty\n$'}
+
+  - write_file:
+      path: local/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 1], ["b@x", 1]],
+          "patches": [
+            {
+              "author": "a@x",
+              "revision": 1,
+              "base": [],
+              "message": "base",
+              "changes": [{"type": "text", "path": "f", "edit": [{"insert": ["one\n"]}]}]
+            },
+            {
+              "author": "b@x",
+              "revision": 1,
+              "base": [["a@x", 1]],
+              "message": "overconsume",
+              "changes": [{"type": "text", "path": "f", "edit": [{"delete": 2}]}]
+            }
+          ]
+        }
+  - run:
+      cwd: local
+      args: [status]
+      expect:
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_matches, pattern: '^snap: .+consumes beyond old content\n$'}
+
+  - write_file:
+      path: local/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 1], ["b@x", 1]],
+          "patches": [
+            {
+              "author": "a@x",
+              "revision": 1,
+              "base": [],
+              "message": "base",
+              "changes": [{"type": "put", "path": "f", "content": "YQ=="}]
+            },
+            {
+              "author": "b@x",
+              "revision": 1,
+              "base": [],
+              "message": "absent",
+              "changes": [{"type": "delete", "path": "f"}]
+            }
+          ]
+        }
+  - run:
+      cwd: local
+      args: [status]
+      expect:
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_matches, pattern: '^snap: delete of absent path: f\n$'}
+
+  - assert:
+      - {type: file_text_equals, path: local/keep, value: "unchanged\n"}

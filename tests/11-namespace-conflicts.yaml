@@ -1,0 +1,112 @@
+format: 1
+name: canonical namespace winners replace conflicting files in both directions
+steps:
+  - run:
+      args: [init, ancestor]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      args: [init, descendant]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: ancestor
+      args: [config, contributor.id, alice@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: descendant
+      args: [config, contributor.id, bob@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: ancestor/a
+      text: "ancestor\n"
+  - write_file:
+      path: descendant/a/b
+      text: "descendant\n"
+  - run:
+      cwd: ancestor
+      args: [commit, ancestor]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: descendant
+      args: [commit, descendant]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: ancestor
+      args: [merge, ../descendant]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stderr_equals
+          value: "warning: auto-resolved a/b: namespace-wins\n"
+  - assert:
+      - type: file_text_equals
+        path: ancestor/a
+        value: "ancestor\n"
+      - type: path_not_exists
+        path: ancestor/a/b
+  - run:
+      args: [init, early-ancestor]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      args: [init, late-descendant]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: early-ancestor
+      args: [config, contributor.id, bob@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: late-descendant
+      args: [config, contributor.id, alice@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: early-ancestor/x
+      text: "ancestor\n"
+  - write_file:
+      path: late-descendant/x/y
+      text: "descendant\n"
+  - run:
+      cwd: early-ancestor
+      args: [commit, ancestor]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: late-descendant
+      args: [commit, descendant]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: early-ancestor
+      args: [merge, ../late-descendant]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stderr_equals
+          value: "warning: auto-resolved x: namespace-wins\n"
+  - assert:
+      - type: path_exists
+        path: early-ancestor/x
+        kind: directory
+      - type: file_text_equals
+        path: early-ancestor/x/y
+        value: "descendant\n"

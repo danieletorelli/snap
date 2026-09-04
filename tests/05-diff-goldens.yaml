@@ -1,0 +1,126 @@
+format: 1
+name: diff renders canonical repeated-line edits and missing final newlines
+steps:
+  - run:
+      args: [init, repo]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: repo
+      args: [config, contributor.id, a@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: repo/repeated.txt
+      text: "a\nb\na\n"
+  - run:
+      cwd: repo
+      args: [commit, old]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: repo/repeated.txt
+      text: "b\na\na"
+  - write_file:
+      path: repo/added.txt
+      text: "new"
+  - run:
+      cwd: repo
+      args: [diff]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: |
+            --- /dev/null
+            +++ b/added.txt
+            @@ -1,0 +1,1 @@
+            +new
+            \ No newline at end of file
+            --- a/repeated.txt
+            +++ b/repeated.txt
+            @@ -1,3 +1,3 @@
+            -a
+             b
+             a
+            +a
+            \ No newline at end of file
+        - type: stderr_equals
+          value: ""
+  - run:
+      cwd: repo
+      args: [commit, new]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "(a@x->2)\n"
+        - type: stderr_equals
+          value: ""
+  - assert:
+      - type: json_equals
+        path: repo/.snap/repository.json
+        value:
+          format: 1
+          frontier: [[a@x, 2]]
+          patches:
+            - author: a@x
+              revision: 1
+              base: []
+              message: old
+              changes:
+                - type: text
+                  path: repeated.txt
+                  edit:
+                    - insert: ["a\n", "b\n", "a\n"]
+            - author: a@x
+              revision: 2
+              base: [[a@x, 1]]
+              message: new
+              changes:
+                - type: text
+                  path: added.txt
+                  edit:
+                    - insert: [new]
+                - type: text
+                  path: repeated.txt
+                  edit:
+                    - delete: 1
+                    - retain: 2
+                    - insert: [a]
+  - run:
+      cwd: repo
+      args: [diff, "(a@x->1)", "(a@x->2)"]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: |
+            --- /dev/null
+            +++ b/added.txt
+            @@ -1,0 +1,1 @@
+            +new
+            \ No newline at end of file
+            --- a/repeated.txt
+            +++ b/repeated.txt
+            @@ -1,3 +1,3 @@
+            -a
+             b
+             a
+            +a
+            \ No newline at end of file
+        - type: stderr_equals
+          value: ""
+  - run:
+      cwd: repo
+      args: [diff, "(a@x->2)", "(a@x->2)"]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: ""
+        - type: stderr_equals
+          value: ""

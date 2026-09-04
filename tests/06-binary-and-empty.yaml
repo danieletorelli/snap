@@ -1,0 +1,55 @@
+format: 1
+name: binary and empty files are versioned byte exactly
+steps:
+  - run:
+      args: [init, repo]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: repo
+      args: [config, contributor.id, binary@example.com]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: repo/empty
+      text: ""
+  - write_file:
+      path: repo/data.bin
+      base64: AP+AQUI=
+  - run:
+      cwd: repo
+      args: [diff]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "Binary files /dev/null and b/data.bin differ\n--- /dev/null\n+++ b/empty\n@@ -1,0 +1,0 @@\n"
+        - type: stderr_equals
+          value: ""
+  - run:
+      cwd: repo
+      args: [commit, bytes]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "(binary@example.com->1)\n"
+  - assert:
+      - type: file_base64_equals
+        path: repo/data.bin
+        value: AP+AQUI=
+      - type: file_text_equals
+        path: repo/empty
+        value: ""
+  - remove:
+      path: repo/data.bin
+  - run:
+      cwd: repo
+      args: [diff]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "Binary files a/data.bin and /dev/null differ\n"

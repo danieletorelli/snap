@@ -1,0 +1,87 @@
+format: 1
+name: CLI versions are canonical known causal frontiers
+steps:
+  - run:
+      args: [init, repo]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: repo
+      args: [config, contributor.id, a@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: repo/file.txt
+      text: "one\n"
+  - run:
+      cwd: repo
+      args: [commit, one]
+      expect:
+        - type: exit_code
+          value: 0
+  - mkdir:
+      path: repo/sub
+  - mkdir:
+      path: repo/sub/deep
+  - run:
+      cwd: repo/sub/deep
+      args: [status]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "version (a@x->1)\n"
+        - type: stderr_equals
+          value: ""
+  - run:
+      cwd: repo
+      args: [diff, "(a@x->01)", "(a@x->1)"]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_contains
+          value: invalid version
+  - run:
+      cwd: repo
+      args: [diff, "(a@x->1,a@x->2)", "(a@x->1)"]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stderr_contains
+          value: invalid version
+  - run:
+      cwd: repo
+      args: [diff, "(a@x->2)", "(a@x->1)"]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stderr_equals
+          value: "snap: unknown version: (a@x->2)\n"
+  - run:
+      cwd: repo
+      env:
+        HOME: null
+      args: [revert, "()"]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "(a@x->2)\n"
+  - remove:
+      path: repo/.snap/config.json
+  - run:
+      cwd: repo
+      env:
+        HOME: null
+      args: [revert, "(a@x->1)"]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_equals
+          value: "snap: contributor.id is required; configure it locally or globally\n"

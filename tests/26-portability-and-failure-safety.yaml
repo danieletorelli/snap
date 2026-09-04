@@ -1,0 +1,164 @@
+format: 1
+name: local exchange preserves text bytes and malformed remotes never mutate
+steps:
+  - run:
+      args: [init, remote]
+      expect: [{type: exit_code, value: 0}]
+  - run:
+      cwd: remote
+      args: [config, contributor.id, remote@x]
+      expect: [{type: exit_code, value: 0}]
+  - write_file: {path: remote/crlf.txt, base64: YQ0KYg==}
+  - write_file: {path: remote/nul.bin, base64: YQBi}
+  - write_file: {path: remote/unicode.txt, text: "hé\n"}
+  - run:
+      cwd: remote
+      args: [commit, portable-bytes]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "(remote@x->1)\n"}
+        - {type: stderr_equals, value: ""}
+  - assert:
+      - type: json_equals
+        path: remote/.snap/repository.json
+        value:
+          format: 1
+          frontier: [[remote@x, 1]]
+          patches:
+            - author: remote@x
+              revision: 1
+              base: []
+              message: portable-bytes
+              changes:
+                - type: text
+                  path: crlf.txt
+                  edit:
+                    - insert: ["a\r\n", b]
+                - {type: put, path: nul.bin, content: YQBi}
+                - type: text
+                  path: unicode.txt
+                  edit:
+                    - insert: ["hé\n"]
+  - run:
+      args: [init, local]
+      expect: [{type: exit_code, value: 0}]
+  - run:
+      cwd: local
+      args: [diff, "()", "(remote@x->1)", --repo, ../remote]
+      expect:
+        - {type: exit_code, value: 0}
+        - type: stdout_equals
+          value: "--- /dev/null\n+++ b/crlf.txt\n@@ -1,0 +1,2 @@\n+a\r\n+b\n\\ No newline at end of file\nBinary files /dev/null and b/nul.bin differ\n--- /dev/null\n+++ b/unicode.txt\n@@ -1,0 +1,1 @@\n+hé\n"
+        - {type: stderr_equals, value: ""}
+  - assert:
+      - type: json_equals
+        path: local/.snap/repository.json
+        value: {format: 1, frontier: [], patches: []}
+      - {type: path_not_exists, path: local/crlf.txt}
+
+  - run:
+      args: [init, malformed]
+      expect: [{type: exit_code, value: 0}]
+  - write_file:
+      path: malformed/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [],
+          "patches": [],
+          "bad": true
+        }
+  - run:
+      cwd: local
+      args: [merge, ../malformed]
+      expect: &remote_failure
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_matches, pattern: '^snap: .+\n$'}
+  - run:
+      cwd: local
+      args: [diff, "()", "()", --repo, ../malformed]
+      expect: *remote_failure
+
+  - start_http:
+      id: malformed-http
+      capture_url: malformed_url
+      routes:
+        - method: GET
+          target: /repository.json
+          status: 200
+          text: |
+            {
+              "format": 1,
+              "frontier": [],
+              "patches": [],
+              "bad": true
+            }
+  - run:
+      cwd: local
+      args: [merge, "{{malformed_url}}/repository.json"]
+      expect: *remote_failure
+  - run:
+      cwd: local
+      args: [diff, "()", "()", --repo, "{{malformed_url}}/repository.json"]
+      expect: *remote_failure
+  - assert:
+      - type: json_equals
+        path: local/.snap/repository.json
+        value: {format: 1, frontier: [], patches: []}
+      - type: tree_equals
+        path: local
+        entries:
+          - {path: .snap, kind: directory}
+          - {path: .snap/repository.json, kind: file}
+      - type: http_requests_equal
+        server: malformed-http
+        value:
+          - {method: GET, target: /repository.json}
+          - {method: GET, target: /repository.json}
+  - stop_http: {id: malformed-http}
+
+  # Parsed typed patches, not JSON key order or whitespace, define identity.
+  - run:
+      args: [init, duplicate-left]
+      expect: [{type: exit_code, value: 0}]
+  - run:
+      args: [init, duplicate-right]
+      expect: [{type: exit_code, value: 0}]
+  - write_file: {path: duplicate-left/f, text: "same\n"}
+  - write_file: {path: duplicate-right/f, text: "same\n"}
+  - write_file:
+      path: duplicate-left/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["same@x", 1]],
+          "patches": [
+            {
+              "author": "same@x",
+              "revision": 1,
+              "base": [],
+              "message": "same",
+              "changes": [{"type": "text", "path": "f", "edit": [{"insert": ["same\n"]}]}]
+            }
+          ]
+        }
+  - write_file:
+      path: duplicate-right/.snap/repository.json
+      text: |
+        { "patches": [
+          {
+            "changes": [{"edit": [{"insert": ["same\n"]}], "path": "f", "type": "text"}],
+            "message": "same", "base": [], "revision": 1, "author": "same@x"
+          }
+        ], "frontier": [["same@x", 1]], "format": 1
+        }
+  - run:
+      cwd: duplicate-left
+      args: [merge, ../duplicate-right]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "(same@x->1)\n"}
+        - {type: stderr_equals, value: ""}
+  - assert:
+      - {type: file_text_equals, path: duplicate-left/f, value: "same\n"}

@@ -1,0 +1,32 @@
+format: 1
+name: init creates an empty repository
+steps:
+  - mkdir:
+      path: repo
+
+  - run:
+      cwd: repo
+      args: [init]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "()\n"
+        - type: stderr_equals
+          value: ""
+
+  - assert:
+      - type: tree_equals
+        path: repo
+        entries:
+          - path: .snap
+            kind: directory
+          - path: .snap/repository.json
+            kind: file
+
+      - type: json_equals
+        path: repo/.snap/repository.json
+        value:
+          format: 1
+          frontier: []
+          patches: []

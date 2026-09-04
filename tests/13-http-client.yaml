@@ -1,0 +1,110 @@
+format: 1
+name: HTTP merge and diff use one exact validated GET without redirects
+steps:
+  - run:
+      args: [init, remote]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: remote
+      args: [config, contributor.id, remote@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: remote/file.txt
+      text: "remote\n"
+  - run:
+      cwd: remote
+      args: [commit, remote]
+      expect:
+        - type: exit_code
+          value: 0
+  - start:
+      id: remote
+      cwd: remote
+      args: [--serve, "0"]
+      ready:
+        stream: stdout
+        pattern: '^(http://127\.0\.0\.1:[0-9]+/repository\.json)\n'
+        capture:
+          as: remote_url
+          group: 1
+  - run:
+      args: [init, local]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: local
+      args: [diff, "()", "(remote@x->1)", --repo, "{{remote_url}}"]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "--- /dev/null\n+++ b/file.txt\n@@ -1,0 +1,1 @@\n+remote\n"
+        - type: stderr_equals
+          value: ""
+  - run:
+      cwd: local
+      args: [merge, "{{remote_url}}"]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "(remote@x->1)\n"
+        - type: stderr_equals
+          value: ""
+  - assert:
+      - type: file_text_equals
+        path: local/file.txt
+        value: "remote\n"
+  - stop:
+      id: remote
+      expect:
+        - type: exit_code
+          value: 0
+  - start_http:
+      id: invalid
+      capture_url: invalid_url
+      routes:
+        - method: GET
+          target: /bad
+          status: 200
+          text: not-json
+        - method: GET
+          target: /redirect
+          status: 302
+          headers:
+            location: /bad
+  - run:
+      cwd: local
+      args: [merge, "{{invalid_url}}/bad"]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_contains
+          value: invalid JSON
+  - run:
+      cwd: local
+      args: [merge, "{{invalid_url}}/redirect"]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_contains
+          value: HTTP 302
+  - assert:
+      - type: http_requests_equal
+        server: invalid
+        value:
+          - method: GET
+            target: /bad
+          - method: GET
+            target: /redirect
+  - stop_http:
+      id: invalid

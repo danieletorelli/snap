@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
+
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+file_mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0; }
+
+implementation_dir() {
+  if [ -d "$PROJECT_ROOT/solutions/$1" ]; then
+    printf '%s\n' "$PROJECT_ROOT/solutions/$1"
+  else
+    printf '%s\n' "$PROJECT_ROOT/$1"
+  fi
+}
+
+forced_lang=""
+passthrough=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --lang)
+      [ $# -ge 2 ] || die "--lang requires ts, rust, or scala"
+      case "$2" in ts|rust|scala) forced_lang="$2" ;; *) die "unknown language: $2" ;; esac
+      shift 2
+      ;;
+    *) passthrough+=("$1"); shift ;;
+  esac
+done
+
+candidates=()
+mtimes=()
+for candidate in ts rust scala; do
+  root="$(implementation_dir "$candidate")"
+  main=""
+  available=false
+  case "$candidate" in
+    ts) main="$root/src/main.ts"; [ -f "$main" ] && available=true ;;
+    rust)
+      main="$root/src/main.rs"
+      [ -f "$main" ] && available=true
+      ;;
+    scala)
+      main="$root/src/main/scala/Main.scala"
+      [ -f "$main" ] && available=true
+      ;;
+  esac
+  if $available; then
+    candidates+=("$candidate")
+    mtimes+=("$(file_mtime "$main")")
+  fi
+done
+
+lang=""
+if [ -n "$forced_lang" ]; then
+  for candidate in "${candidates[@]+"${candidates[@]}"}"; do
+    [ "$candidate" = "$forced_lang" ] && lang="$candidate"
+  done
+  [ -n "$lang" ] || die "$forced_lang Snap implementation is unavailable"
+elif [ ${#candidates[@]} -eq 0 ]; then
+  die "no Snap implementation is available"
+else
+  best=0
+  for ((index = 1; index < ${#candidates[@]}; index++)); do
+    [ "${mtimes[$index]}" -le "${mtimes[$best]}" ] || best=$index
+  done
+  lang="${candidates[$best]}"
+fi
+
+root="$(implementation_dir "$lang")"
+case "$lang" in
+  ts)
+    if [ ! -d "$root/node_modules" ]; then (cd "$root" && npm ci --silent); fi
+    exec node "$root/node_modules/tsx/dist/cli.mjs" "$root/src/main.ts" "${passthrough[@]+"${passthrough[@]}"}"
+    ;;
+  rust)
+    binary="$root/target/debug/snap"
+    if [ ! -x "$binary" ] || [ -n "$(find "$root/src" -type f -newer "$binary" -print -quit 2>/dev/null)" ]; then
+      (cd "$root" && cargo build --quiet)
+    fi
+    exec "$binary" "${passthrough[@]+"${passthrough[@]}"}"
+    ;;
+  scala)
+    jar="$(find "$root/target" -path '*/scala-*/*-assembly-*.jar' -type f 2>/dev/null | head -n 1)"
+    if [ -z "$jar" ] || [ -n "$(find "$root/src" -type f -newer "$jar" -print -quit 2>/dev/null)" ] || [ "$root/build.sbt" -nt "$jar" ]; then
+      (cd "$root" && sbt -batch assembly >/dev/null)
+      jar="$(find "$root/target" -path '*/scala-*/*-assembly-*.jar' -type f | head -n 1)"
+    fi
+    exec java -jar "$jar" "${passthrough[@]+"${passthrough[@]}"}"
+    ;;
+esac

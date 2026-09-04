@@ -1,0 +1,89 @@
+format: 1
+name: revert is additive and restores file-directory transitions
+steps:
+  - run:
+      args: [init, repo]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: repo
+      args: [config, contributor.id, a@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: repo/node
+      text: "file\n"
+  - run:
+      cwd: repo
+      args: [commit, file]
+      expect:
+        - type: exit_code
+          value: 0
+  - remove:
+      path: repo/node
+  - write_file:
+      path: repo/node/child
+      text: "child\n"
+  - run:
+      cwd: repo
+      args: [commit, directory]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: repo
+      args: [revert, "(a@x->1)"]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "(a@x->3)\n"
+        - type: stderr_equals
+          value: ""
+  - assert:
+      - type: file_text_equals
+        path: repo/node
+        value: "file\n"
+      - type: path_not_exists
+        path: repo/node/child
+  - run:
+      cwd: repo
+      args: [revert, "(a@x->2)"]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "(a@x->4)\n"
+  - assert:
+      - type: file_text_equals
+        path: repo/node/child
+        value: "child\n"
+  - run:
+      cwd: repo
+      args: [log]
+      expect:
+        - {type: exit_code, value: 0}
+        - type: stdout_equals
+          value: "(a@x->4)\ta@x\trevert to (a@x->2)\n(a@x->3)\ta@x\trevert to (a@x->1)\n(a@x->2)\ta@x\tdirectory\n(a@x->1)\ta@x\tfile\n"
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: repo
+      args: [revert, "(a@x->2)"]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stderr_equals
+          value: "snap: target tree is already current\n"
+  - write_file:
+      path: repo/dirty
+      text: dirty
+  - run:
+      cwd: repo
+      args: [revert, "(a@x->1)"]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stderr_equals
+          value: "snap: working tree is dirty\n"

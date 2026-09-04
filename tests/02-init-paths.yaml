@@ -1,0 +1,60 @@
+format: 1
+name: initialization preserves files and rejects nested or existing repositories
+steps:
+  - mkdir:
+      path: repo
+  - write_file:
+      path: repo/existing.txt
+      text: "keep me\n"
+  - run:
+      cwd: repo
+      args: [init]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "()\n"
+        - type: stderr_equals
+          value: ""
+  - assert:
+      - type: file_text_equals
+        path: repo/existing.txt
+        value: "keep me\n"
+  - run:
+      cwd: repo
+      args: [init]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_contains
+          value: repository already exists
+  - mkdir:
+      path: repo/child
+  - run:
+      cwd: repo/child
+      args: [init]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_contains
+          value: cannot initialize inside repository
+  - assert:
+      - type: path_not_exists
+        path: repo/child/.snap
+  - run:
+      args: [init, new/repository]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "()\n"
+        - type: stderr_equals
+          value: ""
+  - assert:
+      - type: path_exists
+        path: new/repository/.snap/repository.json
+        kind: file

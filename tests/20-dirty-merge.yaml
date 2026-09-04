@@ -1,0 +1,77 @@
+format: 1
+name: merge refuses dirty and unsupported working trees without importing history
+steps:
+  - run:
+      args: [init, remote]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: remote
+      args: [config, contributor.id, remote@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: remote/remote.txt
+      text: "remote\n"
+  - run:
+      cwd: remote
+      args: [commit, remote]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      args: [init, local]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: local/dirty.txt
+      text: "dirty\n"
+  - run:
+      cwd: local
+      args: [merge, ../remote]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_equals
+          value: "snap: working tree is dirty\n"
+  - assert:
+      - type: file_text_equals
+        path: local/dirty.txt
+        value: "dirty\n"
+      - type: path_not_exists
+        path: local/remote.txt
+      - type: json_equals
+        path: local/.snap/repository.json
+        value:
+          format: 1
+          frontier: []
+          patches: []
+  - remove:
+      path: local/dirty.txt
+  - symlink:
+      path: local/link
+      target: ../remote/remote.txt
+  - run:
+      cwd: local
+      args: [merge, ../remote]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_equals
+          value: "snap: unsupported working tree entry: link\n"
+  - assert:
+      - type: path_not_exists
+        path: local/remote.txt
+      - type: json_equals
+        path: local/.snap/repository.json
+        value:
+          format: 1
+          frontier: []
+          patches: []

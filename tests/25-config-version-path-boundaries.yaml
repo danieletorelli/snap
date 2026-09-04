@@ -1,0 +1,130 @@
+format: 1
+name: configuration versions paths and text use their exact canonical boundaries
+steps:
+  - run:
+      args: [init, repo]
+      expect: [{type: exit_code, value: 0}]
+  - write_file:
+      path: repo/.snap/config.json
+      text: |
+        {
+          "contributor": {"id": "old@x"},
+          "unknown": true
+        }
+  - run:
+      cwd: repo
+      args: [config, contributor.id, new@x]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_equals, value: ""}
+  - assert:
+      - type: json_equals
+        path: repo/.snap/config.json
+        value: {contributor: {id: new@x}}
+  - write_file:
+      path: repo/.snap/config.json
+      text: |
+        {
+          "contributor": {"id": "a@x", "id": "b@x"}
+        }
+  - write_file: {path: repo/work, text: "dirty\n"}
+  - run:
+      cwd: repo
+      args: [commit, duplicate-config]
+      expect:
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_matches, pattern: '^snap: duplicate JSON key .+\n$'}
+  - write_file:
+      path: repo/.snap/config.json
+      text: |
+        {
+          "contributor": {"id": "not-an-id"}
+        }
+  - write_file:
+      path: home/.snapconfig.json
+      text: |
+        {
+          "contributor": {"id": "global@x"}
+        }
+  - run:
+      cwd: repo
+      args: [commit, invalid-local-blocks-global]
+      expect:
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_matches, pattern: '^snap: invalid contributor id: .+\n$'}
+  - run:
+      cwd: repo
+      args: [config, contributor.id, good@x]
+      expect: [{type: exit_code, value: 0}]
+
+  - run:
+      cwd: repo
+      args: [config, contributor.id, "two@@x"]
+      expect: &bad_id
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_matches, pattern: '^snap: invalid contributor id: .+\n$'}
+  - run: {cwd: repo, args: [config, contributor.id, "space @x"], expect: *bad_id}
+  - run: {cwd: repo, args: [config, contributor.id, "a,b@x"], expect: *bad_id}
+  - run: {cwd: repo, args: [config, contributor.id, "a(b)@x"], expect: *bad_id}
+  - run: {cwd: repo, args: [config, contributor.id, "a->b@x"], expect: *bad_id}
+
+  - run:
+      cwd: repo
+      args: [diff, "(good@x->0)", "()"]
+      expect: &bad_version
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_matches, pattern: '^snap: invalid version: .+\n$'}
+  - run: {cwd: repo, args: [diff, "(good@x->-1)", "()"], expect: *bad_version}
+  - run: {cwd: repo, args: [diff, "(good@x->9007199254740992)", "()"], expect: *bad_version}
+  - run: {cwd: repo, args: [diff, "(b@x->1,a@x->1)", "()"], expect: *bad_version}
+  - run: {cwd: repo, args: [diff, "(a@x->1, b@x->1)", "()"], expect: *bad_version}
+
+  - mkdir: {path: repo/empty}
+  - mkdir: {path: repo/deep}
+  - mkdir: {path: repo/deep/empty}
+  - write_file: {path: repo/.snap/untracked, text: "metadata\n"}
+  - remove: {path: repo/work}
+  - run:
+      cwd: repo
+      args: [status]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "version ()\n"}
+        - {type: stderr_equals, value: ""}
+
+  - write_file: {path: repo/z, text: "z\n"}
+  - write_file: {path: repo/é, text: "accent\n"}
+  - write_file: {path: repo/😀, text: "emoji\n"}
+  - write_file: {path: repo/nested/file, text: "nested\n"}
+  - run:
+      cwd: repo
+      args: [status]
+      expect:
+        - {type: exit_code, value: 0}
+        - type: stdout_equals
+          value: |
+            version ()
+            A nested/file
+            A z
+            A é
+            A 😀
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: repo
+      args: [commit, unicode-paths]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "(good@x->1)\n"}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: repo
+      args: [commit, ""]
+      expect:
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_equals, value: "snap: invalid commit message\n"}

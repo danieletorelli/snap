@@ -1,0 +1,160 @@
+format: 1
+name: text OT covers overlapping deletes split counts insert priority and trailing inserts
+timeout: 60
+steps:
+  - run:
+      args: [init, seed]
+      expect:
+        - {type: exit_code, value: 0}
+  - run:
+      cwd: seed
+      args: [config, contributor.id, seed@x]
+      expect:
+        - {type: exit_code, value: 0}
+  - write_file:
+      path: seed/f
+      text: "0\n1\n2\n3\n4\n"
+  - run:
+      cwd: seed
+      args: [commit, base]
+      expect:
+        - {type: exit_code, value: 0}
+
+  # P delete / Q delete: the same base token is deleted only once.
+  - copy_tree: {from: seed, to: dd-a}
+  - copy_tree: {from: seed, to: dd-b}
+  - run:
+      cwd: dd-a
+      args: [config, contributor.id, alice@x]
+      expect: [{type: exit_code, value: 0}]
+  - run:
+      cwd: dd-b
+      args: [config, contributor.id, bob@x]
+      expect: [{type: exit_code, value: 0}]
+  - write_file: {path: dd-a/f, text: "0\n3\n4\n"}
+  - write_file: {path: dd-b/f, text: "0\n2\n3\n4\n"}
+  - run:
+      cwd: dd-a
+      args: [commit, delete-two]
+      expect: [{type: exit_code, value: 0}]
+  - run:
+      cwd: dd-b
+      args: [commit, delete-one]
+      expect: [{type: exit_code, value: 0}]
+  - copy_tree: {from: dd-a, to: dd-from-a}
+  - copy_tree: {from: dd-b, to: dd-from-b}
+  - run:
+      cwd: dd-from-a
+      args: [merge, ../dd-b]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: dd-from-b
+      args: [merge, ../dd-a]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stderr_equals, value: ""}
+  - assert:
+      - {type: file_text_equals, path: dd-from-a/f, value: "0\n3\n4\n"}
+      - {type: trees_equal, left: dd-from-a, right: dd-from-b, ignore: [.snap/config.json]}
+
+  # One transform exercises P insert, Q insert priority, unequal retain/delete
+  # count splitting, overlapping deletes, and a trailing P insertion.
+  - copy_tree: {from: seed, to: split-a}
+  - copy_tree: {from: seed, to: split-b}
+  - run:
+      cwd: split-a
+      args: [config, contributor.id, alice@x]
+      expect: [{type: exit_code, value: 0}]
+  - run:
+      cwd: split-b
+      args: [config, contributor.id, bob@x]
+      expect: [{type: exit_code, value: 0}]
+  - write_file: {path: split-a/f, text: "A\n0\n3\n4\nTAIL\n"}
+  - write_file: {path: split-b/f, text: "0\n1\nB\n3\n4\n"}
+  - run:
+      cwd: split-a
+      args: [commit, incoming-complex]
+      expect: [{type: exit_code, value: 0}]
+  - run:
+      cwd: split-b
+      args: [commit, context-complex]
+      expect: [{type: exit_code, value: 0}]
+  - copy_tree: {from: split-a, to: split-from-a}
+  - copy_tree: {from: split-b, to: split-from-b}
+  - run:
+      cwd: split-from-a
+      args: [merge, ../split-b]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: split-from-b
+      args: [merge, ../split-a]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stderr_equals, value: ""}
+  - assert:
+      - {type: file_text_equals, path: split-from-a/f, value: "A\n0\nB\n3\n4\nTAIL\n"}
+      - {type: trees_equal, left: split-from-a, right: split-from-b, ignore: [.snap/config.json]}
+
+  # P retain / Q delete: a retained token deleted by context stays deleted.
+  - copy_tree: {from: seed, to: rd-a}
+  - copy_tree: {from: seed, to: rd-b}
+  - run:
+      cwd: rd-a
+      args: [config, contributor.id, alice@x]
+      expect: [{type: exit_code, value: 0}]
+  - run:
+      cwd: rd-b
+      args: [config, contributor.id, bob@x]
+      expect: [{type: exit_code, value: 0}]
+  - write_file: {path: rd-a/f, text: "0\n1\n2\n3\n4\nA\n"}
+  - write_file: {path: rd-b/f, text: "0\n2\n3\n4\n"}
+  - run:
+      cwd: rd-a
+      args: [commit, retain-and-append]
+      expect: [{type: exit_code, value: 0}]
+  - run:
+      cwd: rd-b
+      args: [commit, delete-middle]
+      expect: [{type: exit_code, value: 0}]
+  - run:
+      cwd: rd-a
+      args: [merge, ../rd-b]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stderr_equals, value: ""}
+  - assert:
+      - {type: file_text_equals, path: rd-a/f, value: "0\n2\n3\n4\nA\n"}
+
+  # Q insert before a P deletion survives because deletions consume base only.
+  - copy_tree: {from: seed, to: survive-a}
+  - copy_tree: {from: seed, to: survive-b}
+  - run:
+      cwd: survive-a
+      args: [config, contributor.id, alice@x]
+      expect: [{type: exit_code, value: 0}]
+  - run:
+      cwd: survive-b
+      args: [config, contributor.id, bob@x]
+      expect: [{type: exit_code, value: 0}]
+  - write_file: {path: survive-a/f, text: "0\n2\n3\n4\n"}
+  - write_file: {path: survive-b/f, text: "0\nB\n1\n2\n3\n4\n"}
+  - run:
+      cwd: survive-a
+      args: [commit, delete-base-token]
+      expect: [{type: exit_code, value: 0}]
+  - run:
+      cwd: survive-b
+      args: [commit, insert-before-token]
+      expect: [{type: exit_code, value: 0}]
+  - run:
+      cwd: survive-a
+      args: [merge, ../survive-b]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stderr_equals, value: ""}
+  - assert:
+      - {type: file_text_equals, path: survive-a/f, value: "0\nB\n2\n3\n4\n"}

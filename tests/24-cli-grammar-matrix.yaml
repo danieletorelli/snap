@@ -1,0 +1,37 @@
+format: 1
+name: every command rejects unknown misplaced duplicate and extra arguments
+steps:
+  - run:
+      args: [--version, extra]
+      expect: &invalid
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_equals, value: "snap: invalid command or arguments\n"}
+  - run: {args: [init, a, b], expect: *invalid}
+  - run: {args: [init, --unknown], expect: *invalid}
+  - run:
+      args: [init, repo]
+      expect:
+        - {type: exit_code, value: 0}
+  - run: {cwd: repo, args: [config, contributor.id, a@x, --global], expect: *invalid}
+  - run: {cwd: repo, args: [config, --global, --global, contributor.id, a@x], expect: *invalid}
+  - run: {cwd: repo, args: [status, extra], expect: *invalid}
+  - run: {cwd: repo, args: [log, --unknown], expect: *invalid}
+  - run: {cwd: repo, args: [commit], expect: *invalid}
+  - run: {cwd: repo, args: [commit, message, extra], expect: *invalid}
+  - run:
+      cwd: repo
+      args: [diff, "()"]
+      expect: &diff_usage
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_matches, pattern: '^snap: usage: snap diff .+\n$'}
+  - run: {cwd: repo, args: [diff, "()", "()", --unknown, repo], expect: *diff_usage}
+  - run: {cwd: repo, args: [diff, "()", "()", --repo, repo, --repo, repo], expect: *diff_usage}
+  - run: {cwd: repo, args: [revert], expect: *invalid}
+  - run: {cwd: repo, args: [revert, "()", extra], expect: *invalid}
+  - run: {cwd: repo, args: [merge], expect: *invalid}
+  - run: {cwd: repo, args: [merge, repo, extra], expect: *invalid}
+  - run: {cwd: repo, args: [--serve, "0", extra], expect: *invalid}
+  - assert:
+      - {type: path_not_exists, path: --unknown}

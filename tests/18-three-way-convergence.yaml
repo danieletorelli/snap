@@ -1,0 +1,183 @@
+format: 1
+name: three-way text history converges across different merge association orders
+steps:
+  - run:
+      args: [init, base]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: base
+      args: [config, contributor.id, seed@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: base/story.txt
+      text: "start\nend\n"
+  - run:
+      cwd: base
+      args: [commit, base]
+      expect:
+        - type: exit_code
+          value: 0
+  - copy_tree:
+      from: base
+      to: a
+  - copy_tree:
+      from: base
+      to: b
+  - copy_tree:
+      from: base
+      to: c
+  - run:
+      cwd: a
+      args: [config, contributor.id, a@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: b
+      args: [config, contributor.id, b@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: c
+      args: [config, contributor.id, c@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: a/story.txt
+      text: "start\nA\nend\n"
+  - write_file:
+      path: b/story.txt
+      text: "start\nB\nend\n"
+  - write_file:
+      path: c/story.txt
+      text: "end\n"
+  - run:
+      cwd: a
+      args: [commit, a]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: b
+      args: [commit, b]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: c
+      args: [commit, c]
+      expect:
+        - type: exit_code
+          value: 0
+  - copy_tree:
+      from: a
+      to: aggregate-1
+  - copy_tree:
+      from: c
+      to: aggregate-2
+  - copy_tree: {from: a, to: aggregate-3}
+  - copy_tree: {from: b, to: aggregate-4}
+  - copy_tree: {from: b, to: aggregate-5}
+  - copy_tree: {from: c, to: aggregate-6}
+  - run:
+      cwd: aggregate-1
+      args: [merge, ../b]
+      expect:
+        - type: exit_code
+          value: 0
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: aggregate-1
+      args: [merge, ../c]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "(a@x->1,b@x->1,c@x->1,seed@x->1)\n"
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: aggregate-2
+      args: [merge, ../a]
+      expect:
+        - type: exit_code
+          value: 0
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: aggregate-2
+      args: [merge, ../b]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "(a@x->1,b@x->1,c@x->1,seed@x->1)\n"
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: aggregate-3
+      args: [merge, ../c]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: aggregate-3
+      args: [merge, ../b]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "(a@x->1,b@x->1,c@x->1,seed@x->1)\n"}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: aggregate-4
+      args: [merge, ../a]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: aggregate-4
+      args: [merge, ../c]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "(a@x->1,b@x->1,c@x->1,seed@x->1)\n"}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: aggregate-5
+      args: [merge, ../c]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: aggregate-5
+      args: [merge, ../a]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "(a@x->1,b@x->1,c@x->1,seed@x->1)\n"}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: aggregate-6
+      args: [merge, ../b]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: aggregate-6
+      args: [merge, ../a]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "(a@x->1,b@x->1,c@x->1,seed@x->1)\n"}
+        - {type: stderr_equals, value: ""}
+  - assert:
+      - type: file_text_equals
+        path: aggregate-1/story.txt
+        value: "B\nA\nend\n"
+      - type: trees_equal
+        left: aggregate-1
+        right: aggregate-2
+        ignore: [.snap/config.json]
+      - {type: trees_equal, left: aggregate-1, right: aggregate-3, ignore: [.snap/config.json]}
+      - {type: trees_equal, left: aggregate-1, right: aggregate-4, ignore: [.snap/config.json]}
+      - {type: trees_equal, left: aggregate-1, right: aggregate-5, ignore: [.snap/config.json]}
+      - {type: trees_equal, left: aggregate-1, right: aggregate-6, ignore: [.snap/config.json]}

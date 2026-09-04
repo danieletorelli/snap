@@ -1,0 +1,74 @@
+format: 1
+name: concurrent creates choose the canonical later value independent of merge direction
+steps:
+  - run:
+      args: [init, alice]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      args: [init, bob]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: alice
+      args: [config, contributor.id, alice@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: bob
+      args: [config, contributor.id, bob@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: alice/same.txt
+      text: "alice\n"
+  - write_file:
+      path: bob/same.txt
+      text: "bob\n"
+  - run:
+      cwd: alice
+      args: [commit, alice]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: bob
+      args: [commit, bob]
+      expect:
+        - type: exit_code
+          value: 0
+  - copy_tree:
+      from: alice
+      to: alice-copy
+  - run:
+      cwd: alice
+      args: [merge, ../bob]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "(alice@x->1,bob@x->1)\n"
+        - type: stderr_equals
+          value: "warning: auto-resolved same.txt: later-create-wins\n"
+  - run:
+      cwd: bob
+      args: [merge, ../alice-copy]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "(alice@x->1,bob@x->1)\n"
+        - type: stderr_equals
+          value: "warning: auto-resolved same.txt: later-create-wins\n"
+  - assert:
+      - type: file_text_equals
+        path: alice/same.txt
+        value: "alice\n"
+      - type: trees_equal
+        left: alice
+        right: bob
+        ignore: [.snap/config.json]

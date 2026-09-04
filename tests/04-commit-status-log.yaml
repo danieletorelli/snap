@@ -1,0 +1,96 @@
+format: 1
+name: commit status and log expose exact deterministic history
+steps:
+  - run:
+      args: [init, repo]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: repo
+      args: [config, contributor.id, alice@example.com]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: repo
+      args: [status]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "version ()\n"
+        - type: stderr_equals
+          value: ""
+  - write_file:
+      path: repo/z.txt
+      text: "z\n"
+  - write_file:
+      path: repo/a.txt
+      text: "a\n"
+  - run:
+      cwd: repo
+      args: [status]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "version ()\nA a.txt\nA z.txt\n"
+        - type: stderr_equals
+          value: ""
+  - run:
+      cwd: repo
+      args: [commit, "first\tline\nsecond\\tail"]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "(alice@example.com->1)\n"
+        - type: stderr_equals
+          value: ""
+  - write_file:
+      path: repo/a.txt
+      text: "changed\n"
+  - remove:
+      path: repo/z.txt
+  - write_file:
+      path: repo/m.txt
+      text: "middle\n"
+  - run:
+      cwd: repo
+      args: [status]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "version (alice@example.com->1)\nM a.txt\nA m.txt\nD z.txt\n"
+        - type: stderr_equals
+          value: ""
+  - run:
+      cwd: repo
+      args: [commit, second]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "(alice@example.com->2)\n"
+  - run:
+      cwd: repo
+      args: [log]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "(alice@example.com->2)\talice@example.com\tsecond\n(alice@example.com->1)\talice@example.com\tfirst\\tline\\nsecond\\\\tail\n"
+        - type: stderr_equals
+          value: ""
+  - run:
+      cwd: repo
+      args: [commit, clean]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_equals
+          value: "snap: working tree is clean\n"

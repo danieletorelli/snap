@@ -1,0 +1,56 @@
+format: 1
+name: working tree scans reject symlinks and special files without mutation
+steps:
+  - run:
+      args: [init, repo]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: repo
+      args: [config, contributor.id, a@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - symlink:
+      path: repo/link
+      target: missing
+  - run:
+      cwd: repo
+      args: [status]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_equals
+          value: "snap: unsupported working tree entry: link\n"
+  - run:
+      cwd: repo
+      args: [commit, link]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stderr_equals
+          value: "snap: unsupported working tree entry: link\n"
+  - remove:
+      path: repo/link
+  - fifo:
+      path: repo/pipe
+  - run:
+      cwd: repo
+      args: [diff]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_equals
+          value: "snap: unsupported working tree entry: pipe\n"
+  - assert:
+      - type: json_equals
+        path: repo/.snap/repository.json
+        value:
+          format: 1
+          frontier: []
+          patches: []

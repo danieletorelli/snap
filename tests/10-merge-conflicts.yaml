@@ -1,0 +1,115 @@
+format: 1
+name: merge applies every whole-file conflict rule with sorted warnings
+steps:
+  - run:
+      args: [init, base]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: base
+      args: [config, contributor.id, seed@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: base/delete.txt
+      text: "base\n"
+  - write_file:
+      path: base/incompatible.txt
+      text: "base\n"
+  - write_file:
+      path: base/later-put.txt
+      text: "base\n"
+  - write_file:
+      path: base/identical.txt
+      text: "base\n"
+  - run:
+      cwd: base
+      args: [commit, base]
+      expect:
+        - type: exit_code
+          value: 0
+  - copy_tree:
+      from: base
+      to: left
+  - copy_tree:
+      from: base
+      to: right
+  - run:
+      cwd: left
+      args: [config, contributor.id, alice@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: right
+      args: [config, contributor.id, bob@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: left/delete.txt
+      text: "left\n"
+  - write_file:
+      path: left/incompatible.txt
+      text: "left text\n"
+  - write_file:
+      path: left/later-put.txt
+      base64: AAE=
+  - write_file:
+      path: left/identical.txt
+      text: "same\n"
+  - remove:
+      path: right/delete.txt
+  - write_file:
+      path: right/incompatible.txt
+      base64: AP8=
+  - write_file:
+      path: right/later-put.txt
+      text: "right text\n"
+  - write_file:
+      path: right/identical.txt
+      text: "same\n"
+  - run:
+      cwd: left
+      args: [commit, left]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: right
+      args: [commit, right]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: left
+      args: [merge, ../right]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "(alice@x->1,bob@x->1,seed@x->1)\n"
+        - type: stderr_equals
+          value: "warning: auto-resolved delete.txt: delete-wins\nwarning: auto-resolved incompatible.txt: put-wins\nwarning: auto-resolved later-put.txt: later-put-wins\n"
+  - assert:
+      - type: path_not_exists
+        path: left/delete.txt
+      - type: file_base64_equals
+        path: left/incompatible.txt
+        value: AP8=
+      - type: file_base64_equals
+        path: left/later-put.txt
+        value: AAE=
+      - type: file_text_equals
+        path: left/identical.txt
+        value: "same\n"
+  - run:
+      cwd: left
+      args: [merge, ../right]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stderr_equals
+          value: ""

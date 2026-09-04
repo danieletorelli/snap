@@ -1,0 +1,90 @@
+format: 1
+name: local and global contributor configuration have strict precedence
+steps:
+  - run:
+      args: [config, --global, contributor.id, global@example.com]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: ""
+        - type: stderr_equals
+          value: ""
+  - assert:
+      - type: json_equals
+        path: home/.snapconfig.json
+        value:
+          contributor:
+            id: global@example.com
+  - run:
+      args: [init, local]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: local
+      args: [config, contributor.id, local@example.com]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: ""
+        - type: stderr_equals
+          value: ""
+  - write_file:
+      path: home/.snapconfig.json
+      text: "not json"
+  - write_file:
+      path: local/file.txt
+      text: "local\n"
+  - run:
+      cwd: local
+      args: [commit, local-wins]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "(local@example.com->1)\n"
+        - type: stderr_equals
+          value: ""
+  - run:
+      args: [init, global]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: global/file.txt
+      text: "global\n"
+  - run:
+      cwd: global
+      args: [commit, malformed-global]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_contains
+          value: invalid JSON
+  - write_file:
+      path: home/.snapconfig.json
+      text: '{"contributor":{"id":"global@example.com"}}}}'
+  - run:
+      cwd: global
+      args: [commit, global-fallback]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "(global@example.com->1)\n"
+        - type: stderr_equals
+          value: ""
+  - run:
+      cwd: local
+      args: [config, contributor.id, bad-id]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_contains
+          value: invalid contributor id

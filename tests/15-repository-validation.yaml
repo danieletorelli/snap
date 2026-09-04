@@ -1,0 +1,246 @@
+format: 1
+name: repository reader rejects malformed schemas histories paths and edits
+steps:
+  - run:
+      args: [init, repo]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: repo/keep.txt
+      text: "working bytes stay untouched\n"
+  - write_file:
+      path: repo/.snap/repository.json
+      text: '{"format":1,"format":1,"frontier":[],"patches":[]}'
+  - run:
+      cwd: repo
+      args: [status]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_contains
+          value: duplicate JSON key
+  - write_file:
+      path: repo/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 2]],
+          "patches": [
+            {
+              "author": "a@x",
+              "revision": 2,
+              "base": [["a@x", 1]],
+              "message": "gap",
+              "changes": [{"type":"text","path":"f","edit":[]}]
+            }
+          ]
+        }
+  - run:
+      cwd: repo
+      args: [status]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stderr_contains
+          value: missing a@x
+  - write_file:
+      path: repo/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 1]],
+          "patches": [
+            {
+              "author": "a@x",
+              "revision": 1,
+              "base": [],
+              "message": "bad path",
+              "changes": [{"type":"put","path":".snap/secret","content":"YQ=="}]
+            }
+          ]
+        }
+  - run:
+      cwd: repo
+      args: [status]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stderr_contains
+          value: path is invalid
+  - write_file:
+      path: repo/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 1]],
+          "patches": [
+            {
+              "author": "a@x",
+              "revision": 1,
+              "base": [],
+              "message": "bad bytes",
+              "changes": [{"type":"put","path":"f","content":"abc"}]
+            }
+          ]
+        }
+  - run:
+      cwd: repo
+      args: [status]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stderr_contains
+          value: canonical base64
+  - write_file:
+      path: repo/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 2]],
+          "patches": [
+            {
+              "author": "a@x",
+              "revision": 1,
+              "base": [],
+              "message": "base",
+              "changes": [{"type":"text","path":"f","edit":[{"insert":["one\n","two\n"]}]}]
+            },
+            {
+              "author": "a@x",
+              "revision": 2,
+              "base": [["a@x", 1]],
+              "message": "underconsume",
+              "changes": [{"type":"text","path":"f","edit":[{"retain":1}]}]
+            }
+          ]
+        }
+  - run:
+      cwd: repo
+      args: [status]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stderr_contains
+          value: does not consume old content
+  - write_file:
+      path: repo/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 1]],
+          "patches": [
+            {
+              "author": "a@x",
+              "revision": 1,
+              "base": [],
+              "message": "prefix",
+              "changes": [
+                {"type":"put","path":"a","content":"YQ=="},
+                {"type":"put","path":"a/b","content":"Yg=="}
+              ]
+            }
+          ]
+        }
+  - run:
+      cwd: repo
+      args: [status]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stderr_contains
+          value: tree paths conflict
+  - write_file:
+      path: repo/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 1], ["b@x", 1]],
+          "patches": [
+            {
+              "author": "a@x",
+              "revision": 1,
+              "base": [["b@x", 1]],
+              "message": "cycle a",
+              "changes": [{"type":"text","path":"a","edit":[]}]
+            },
+            {
+              "author": "b@x",
+              "revision": 1,
+              "base": [["a@x", 1]],
+              "message": "cycle b",
+              "changes": [{"type":"text","path":"b","edit":[]}]
+            }
+          ]
+        }
+  - run:
+      cwd: repo
+      args: [status]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stderr_contains
+          value: cyclic or incomplete patch history
+  - write_file:
+      path: repo/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 2]],
+          "patches": [
+            {
+              "author": "a@x",
+              "revision": 1,
+              "base": [],
+              "message": "base",
+              "changes": [{"type":"put","path":"f","content":"YQ=="}]
+            },
+            {
+              "author": "a@x",
+              "revision": 2,
+              "base": [["a@x", 1]],
+              "message": "no op",
+              "changes": [{"type":"put","path":"f","content":"YQ=="}]
+            }
+          ]
+        }
+  - run:
+      cwd: repo
+      args: [status]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stderr_contains
+          value: no-op change
+  - write_file:
+      path: repo/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 1]],
+          "patches": [
+            {
+              "author": "a@x",
+              "revision": 1,
+              "base": [],
+              "message": "adjacent",
+              "changes": [
+                {"type":"text","path":"f","edit":[{"insert":["a\n"]},{"insert":["b\n"]}]}
+              ]
+            }
+          ]
+        }
+  - run:
+      cwd: repo
+      args: [status]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stderr_contains
+          value: adjacent insert
+  - assert:
+      - type: file_text_equals
+        path: repo/keep.txt
+        value: "working bytes stay untouched\n"

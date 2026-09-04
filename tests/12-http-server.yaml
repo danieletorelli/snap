@@ -1,0 +1,169 @@
+format: 1
+name: server exposes one immutable repository snapshot and exits on SIGTERM
+steps:
+  - run:
+      args: [init, repo]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: repo
+      args: [config, contributor.id, a@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: repo/file.txt
+      text: "one\n"
+  - run:
+      cwd: repo
+      args: [commit, one]
+      expect:
+        - type: exit_code
+          value: 0
+  - start:
+      id: origin
+      cwd: repo
+      args: [--serve, "0"]
+      ready:
+        stream: stdout
+        pattern: '^(http://127\.0\.0\.1:[0-9]+/repository\.json)\n'
+        capture:
+          as: origin_url
+          group: 1
+  - http_request:
+      method: GET
+      url: "{{origin_url}}"
+      expect:
+        - type: status
+          value: 200
+        - type: header_equals
+          name: content-type
+          value: application/json; charset=utf-8
+        - type: body_json_equals
+          value:
+            format: 1
+            frontier: [[a@x, 1]]
+            patches:
+              - author: a@x
+                revision: 1
+                base: []
+                message: one
+                changes:
+                  - type: text
+                    path: file.txt
+                    edit:
+                      - insert: ["one\n"]
+  - http_request:
+      method: HEAD
+      url: "{{origin_url}}"
+      expect:
+        - type: status
+          value: 200
+        - type: header_equals
+          name: content-type
+          value: application/json; charset=utf-8
+        - type: body_base64_equals
+          value: ""
+  - http_request:
+      method: POST
+      url: "{{origin_url}}"
+      expect:
+        - type: status
+          value: 405
+        - type: header_equals
+          name: allow
+          value: GET, HEAD
+  - http_request:
+      method: GET
+      url: "{{origin_url}}?query=not-exact"
+      expect:
+        - type: status
+          value: 404
+  - write_file:
+      path: repo/file.txt
+      text: "two\n"
+  - run:
+      cwd: repo
+      args: [commit, two]
+      expect:
+        - type: exit_code
+          value: 0
+  - http_request:
+      method: GET
+      url: "{{origin_url}}"
+      expect:
+        - type: status
+          value: 200
+        - type: body_text_equals
+          value: |
+            {
+              "format": 1,
+              "frontier": [
+                [
+                  "a@x",
+                  1
+                ]
+              ],
+              "patches": [
+                {
+                  "author": "a@x",
+                  "revision": 1,
+                  "base": [],
+                  "message": "one",
+                  "changes": [
+                    {
+                      "type": "text",
+                      "path": "file.txt",
+                      "edit": [
+                        {
+                          "insert": [
+                            "one\n"
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+  - stop:
+      id: origin
+      signal: SIGTERM
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_matches
+          pattern: '^http://127\.0\.0\.1:[0-9]+/repository\.json\n$'
+        - type: stderr_equals
+          value: ""
+  - start:
+      id: interruptible
+      cwd: repo
+      args: [--serve, "0"]
+      ready:
+        stream: stdout
+        pattern: '^http://127\.0\.0\.1:[0-9]+/repository\.json\n'
+  - stop:
+      id: interruptible
+      signal: SIGINT
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_matches, pattern: '^http://127\.0\.0\.1:[0-9]+/repository\.json\n$'}
+        - {type: stderr_equals, value: ""}
+  - write_file:
+      path: repo/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [],
+          "patches": [],
+          "bad": true
+        }
+  - run:
+      cwd: repo
+      args: [--serve, "0"]
+      expect:
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_matches, pattern: '^snap: .+\n$'}

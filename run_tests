@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
+HARNESS_DIR="$PROJECT_ROOT/test-harness"
+export SNAP_HARNESS_CALLER_CWD="$PWD"
+lang=""
+has_candidate=false
+passthrough=()
+
+die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 2; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --lang)
+      [ $# -ge 2 ] || die "--lang requires ts, rust, or scala"
+      case "$2" in ts|rust|scala) lang="$2" ;; *) die "unknown language: $2" ;; esac
+      shift 2
+      ;;
+    --candidate)
+      [ $# -ge 2 ] || die "--candidate requires a path"
+      has_candidate=true
+      passthrough+=("$1" "$2")
+      shift 2
+      ;;
+    -h|--help)
+      cat <<'EOF'
+Usage: verify [--lang ts|rust|scala | --candidate PATH] [options]
+
+  --lang LANGUAGE    bundled implementation to test (default: latest modified)
+  --candidate PATH   arbitrary executable to test
+  --tests PATH       alternate YAML directory
+  --filter TEXT      filename/name substring
+  --verbose, -v      print candidate output
+  --keep-failed      preserve failed sandboxes
+  --summary PATH     write plain-text summary
+  --list             validate and list tests
+EOF
+      exit 0
+      ;;
+    *) passthrough+=("$1"); shift ;;
+  esac
+done
+
+[ -z "$lang" ] || ! $has_candidate || die "--lang and --candidate cannot be combined"
+
+command -v node >/dev/null || die "node is not installed"
+command -v npm >/dev/null || die "npm is not installed"
+
+if [ ! -d "$HARNESS_DIR/node_modules" ]; then
+  printf '\033[1;34m=>\033[0m Installing Snap test-harness dependencies (first run)…\n' >&2
+  (cd "$HARNESS_DIR" && npm ci --silent)
+fi
+
+wrapper=""
+if [ -n "$lang" ]; then
+  if [ -d "$PROJECT_ROOT/solutions/$lang" ]; then
+    implementation_root="$PROJECT_ROOT/solutions/$lang"
+  else
+    implementation_root="$PROJECT_ROOT/$lang"
+  fi
+  case "$lang" in
+    ts) [ -d "$implementation_root/node_modules" ] || (cd "$implementation_root" && npm ci --silent) ;;
+    rust) (cd "$implementation_root" && cargo build --quiet) ;;
+    scala) (cd "$implementation_root" && sbt -batch assembly >/dev/null) ;;
+  esac
+
+  wrapper="$(mktemp "${TMPDIR:-/tmp}/snap-${lang}.XXXXXX")"
+  trap 'rm -f "$wrapper"' EXIT
+  printf '#!/bin/sh\nexec "%s/run" --lang "%s" "$@"\n' "$PROJECT_ROOT" "$lang" > "$wrapper"
+  chmod +x "$wrapper"
+  passthrough+=("--candidate" "$wrapper")
+fi
+
+cd "$HARNESS_DIR"
+npx tsx src/cli.ts "${passthrough[@]+"${passthrough[@]}"}"

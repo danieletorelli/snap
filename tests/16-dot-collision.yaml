@@ -1,0 +1,87 @@
+format: 1
+name: cross-repository dot collisions fail before changing local state
+steps:
+  - run:
+      args: [init, local]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: local
+      args: [config, contributor.id, a@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: local/file.txt
+      text: "local\n"
+  - run:
+      cwd: local
+      args: [commit, local]
+      expect:
+        - type: exit_code
+          value: 0
+  - mkdir:
+      path: remote
+  - mkdir:
+      path: remote/.snap
+  - write_file:
+      path: remote/file.txt
+      text: "remote\n"
+  - write_file:
+      path: remote/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 1]],
+          "patches": [
+            {
+              "author": "a@x",
+              "revision": 1,
+              "base": [],
+              "message": "different",
+              "changes": [
+                {"type":"text","path":"file.txt","edit":[{"insert":["remote\n"]}]}
+              ]
+            }
+          ]
+        }
+  - run:
+      cwd: local
+      args: [diff, "()", "(a@x->1)", --repo, ../remote]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_contains
+          value: "patch collision: a@x revision 1"
+  - run:
+      cwd: local
+      args: [merge, ../remote]
+      expect:
+        - type: exit_code
+          value: 1
+        - type: stdout_equals
+          value: ""
+        - type: stderr_contains
+          value: "patch collision: a@x revision 1"
+  - assert:
+      - type: file_text_equals
+        path: local/file.txt
+        value: "local\n"
+      - type: json_equals
+        path: local/.snap/repository.json
+        value:
+          format: 1
+          frontier: [[a@x, 1]]
+          patches:
+            - author: a@x
+              revision: 1
+              base: []
+              message: local
+              changes:
+                - type: text
+                  path: file.txt
+                  edit:
+                    - insert: ["local\n"]

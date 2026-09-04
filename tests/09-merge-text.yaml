@@ -1,0 +1,95 @@
+format: 1
+name: local merge converges concurrent text changes and is idempotent
+steps:
+  - run:
+      args: [init, left]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: left
+      args: [config, contributor.id, seed@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: left/notes.txt
+      text: "base\n"
+  - run:
+      cwd: left
+      args: [commit, base]
+      expect:
+        - type: exit_code
+          value: 0
+  - copy_tree:
+      from: left
+      to: right
+  - run:
+      cwd: left
+      args: [config, contributor.id, alice@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: right
+      args: [config, contributor.id, bob@x]
+      expect:
+        - type: exit_code
+          value: 0
+  - write_file:
+      path: left/notes.txt
+      text: "base\nleft\n"
+  - write_file:
+      path: right/notes.txt
+      text: "base\nright\n"
+  - run:
+      cwd: left
+      args: [commit, left]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: right
+      args: [commit, right]
+      expect:
+        - type: exit_code
+          value: 0
+  - run:
+      cwd: left
+      args: [merge, "{{sandbox}}/right"]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "(alice@x->1,bob@x->1,seed@x->1)\n"
+        - type: stderr_equals
+          value: ""
+  - assert:
+      - type: file_text_equals
+        path: left/notes.txt
+        value: "base\nright\nleft\n"
+  - run:
+      cwd: right
+      args: [merge, ../left]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "(alice@x->1,bob@x->1,seed@x->1)\n"
+        - type: stderr_equals
+          value: ""
+  - assert:
+      - type: trees_equal
+        left: left
+        right: right
+        ignore: [.snap/config.json]
+  - run:
+      cwd: left
+      args: [merge, ../right]
+      expect:
+        - type: exit_code
+          value: 0
+        - type: stdout_equals
+          value: "(alice@x->1,bob@x->1,seed@x->1)\n"
+        - type: stderr_equals
+          value: ""

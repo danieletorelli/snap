@@ -1,0 +1,119 @@
+format: 1
+name: vector clocks use causal closure componentwise join and canonical Snap order
+steps:
+  - run:
+      args: [init, base]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "()\n"}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: base
+      args: [config, contributor.id, a@x]
+      expect:
+        - {type: exit_code, value: 0}
+  - write_file:
+      path: base/story.txt
+      text: "base\n"
+  - run:
+      cwd: base
+      args: [commit, a1]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "(a@x->1)\n"}
+  - copy_tree:
+      from: base
+      to: a-side
+  - copy_tree:
+      from: base
+      to: b-side
+  - write_file:
+      path: a-side/story.txt
+      text: "base\nA2\n"
+  - run:
+      cwd: a-side
+      args: [commit, a2]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "(a@x->2)\n"}
+  - run:
+      cwd: b-side
+      args: [config, contributor.id, b@x]
+      expect:
+        - {type: exit_code, value: 0}
+  - write_file:
+      path: b-side/story.txt
+      text: "base\nB1\n"
+  - run:
+      cwd: b-side
+      args: [commit, b1]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "(a@x->1,b@x->1)\n"}
+  - write_file:
+      path: b-side/story.txt
+      text: "base\nB1\nB2\n"
+  - run:
+      cwd: b-side
+      args: [commit, b2]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "(a@x->1,b@x->2)\n"}
+  - copy_tree:
+      from: a-side
+      to: from-a
+  - copy_tree:
+      from: b-side
+      to: from-b
+  - run:
+      cwd: from-a
+      args: [merge, ../b-side]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "(a@x->2,b@x->2)\n"}
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: from-b
+      args: [merge, ../a-side]
+      expect:
+        - {type: exit_code, value: 0}
+        - {type: stdout_equals, value: "(a@x->2,b@x->2)\n"}
+        - {type: stderr_equals, value: ""}
+  - assert:
+      - type: file_text_equals
+        path: from-a/story.txt
+        value: "base\nB1\nB2\nA2\n"
+      - type: trees_equal
+        left: from-a
+        right: from-b
+        ignore: [.snap/config.json]
+  - run:
+      cwd: from-a
+      args: [diff, "(a@x->1)", "(a@x->2,b@x->2)"]
+      expect:
+        - {type: exit_code, value: 0}
+        - type: stdout_equals
+          value: |
+            --- a/story.txt
+            +++ b/story.txt
+            @@ -1,1 +1,4 @@
+             base
+            +B1
+            +B2
+            +A2
+        - {type: stderr_equals, value: ""}
+  - run:
+      cwd: from-a
+      args: [diff, "(a@x->2,b@x->2)", "(a@x->1,b@x->2)"]
+      expect:
+        - {type: exit_code, value: 0}
+        - type: stdout_equals
+          value: |
+            --- a/story.txt
+            +++ b/story.txt
+            @@ -1,4 +1,3 @@
+             base
+             B1
+             B2
+            -A2
+        - {type: stderr_equals, value: ""}

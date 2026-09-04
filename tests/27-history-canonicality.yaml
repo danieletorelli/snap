@@ -1,0 +1,133 @@
+format: 1
+name: patch histories require exact schemas canonical order and valid base transitions
+steps:
+  - run:
+      args: [init, repo]
+      expect: [{type: exit_code, value: 0}]
+
+  - write_file:
+      path: repo/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 1]],
+          "patches": [
+            {
+              "author": "a@x", "revision": 1, "base": [], "message": "x",
+              "changes": [{"type": "text", "path": "f", "edit": []}],
+              "unknown": true
+            }
+          ]
+        }
+  - run:
+      cwd: repo
+      args: [status]
+      expect: &invalid
+        - {type: exit_code, value: 1}
+        - {type: stdout_equals, value: ""}
+        - {type: stderr_matches, pattern: '^snap: .+\n$'}
+
+  - write_file:
+      path: repo/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 1], ["b@x", 1]],
+          "patches": [
+            {
+              "author": "b@x", "revision": 1, "base": [], "message": "b",
+              "changes": [{"type": "text", "path": "b", "edit": []}]
+            },
+            {
+              "author": "a@x", "revision": 1, "base": [], "message": "a",
+              "changes": [{"type": "text", "path": "a", "edit": []}]
+            }
+          ]
+        }
+  - run: {cwd: repo, args: [status], expect: *invalid}
+
+  - write_file:
+      path: repo/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 1]],
+          "patches": [
+            {
+              "author": "a@x", "revision": 1, "base": [], "message": "order",
+              "changes": [
+                {"type": "text", "path": "z", "edit": []},
+                {"type": "text", "path": "a", "edit": []}
+              ]
+            }
+          ]
+        }
+  - run: {cwd: repo, args: [status], expect: *invalid}
+
+  - write_file:
+      path: repo/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 1]],
+          "patches": [
+            {
+              "author": "a@x", "revision": 1, "base": [["a@x", 1]], "message": "wrong dot",
+              "changes": [{"type": "text", "path": "f", "edit": []}]
+            }
+          ]
+        }
+  - run: {cwd: repo, args: [status], expect: *invalid}
+
+  - write_file:
+      path: repo/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 1]],
+          "patches": [
+            {
+              "author": "a@x", "revision": 1, "base": [], "message": "bad token",
+              "changes": [{"type": "text", "path": "f", "edit": [{"insert": ["a", "b"]}]}]
+            }
+          ]
+        }
+  - run: {cwd: repo, args: [status], expect: *invalid}
+
+  - write_file:
+      path: repo/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 2]],
+          "patches": [
+            {
+              "author": "a@x", "revision": 1, "base": [], "message": "base",
+              "changes": [{"type": "put", "path": "f", "content": "YQ=="}]
+            },
+            {
+              "author": "a@x", "revision": 2, "base": [["a@x", 1]], "message": "create present",
+              "changes": [{"type": "text", "path": "f", "edit": []}]
+            }
+          ]
+        }
+  - run: {cwd: repo, args: [status], expect: *invalid}
+
+  - write_file:
+      path: repo/.snap/repository.json
+      text: |
+        {
+          "format": 1,
+          "frontier": [["a@x", 2]],
+          "patches": [
+            {
+              "author": "a@x", "revision": 1, "base": [], "message": "binary",
+              "changes": [{"type": "put", "path": "f", "content": "AA=="}]
+            },
+            {
+              "author": "a@x", "revision": 2, "base": [["a@x", 1]], "message": "text over binary",
+              "changes": [{"type": "text", "path": "f", "edit": [{"delete": 1}]}]
+            }
+          ]
+        }
+  - run: {cwd: repo, args: [status], expect: *invalid}
