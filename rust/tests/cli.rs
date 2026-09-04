@@ -372,3 +372,71 @@ fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
         }
     }
 }
+
+#[test]
+fn commit_message_at_4096_bytes_succeeds_and_4097_fails() {
+    let sandbox = Sandbox::new();
+    let env = sandbox.env("repo");
+    ok(&sandbox.env("."), &["init", "repo"]);
+    ok(&env, &["config", "contributor.id", "a@x"]);
+    sandbox.write("repo/f.txt", "x\n");
+
+    let msg_4096 = "a".repeat(4096);
+    assert_eq!(ok(&env, &["commit", &msg_4096]), "(a@x->1)\n");
+
+    sandbox.write("repo/f.txt", "y\n");
+    let msg_4097 = "b".repeat(4097);
+    let out = run(&env, &["commit", &msg_4097]);
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.contains("message"), "{}", out.stderr);
+}
+
+#[test]
+fn revision_overflow_is_rejected() {
+    let sandbox = Sandbox::new();
+    let env = sandbox.env("repo");
+    ok(&sandbox.env("."), &["init", "repo"]);
+    ok(&env, &["config", "contributor.id", "a@x"]);
+
+    // Craft a repo at MAX_REVISION by writing repository.json directly.
+    // This jumps from revision 1 to MAX_REVISION, which validation catches.
+    let patches_json = format!(
+        r#"{{
+          "format": 1,
+          "frontier": [["a@x", {max_rev}]],
+          "patches": [
+            {{"author":"a@x","revision":1,"base":[],"message":"init","changes":[{{"type":"put","path":"f","content":"YQ=="}}]}},
+            {{"author":"a@x","revision":{max_rev},"base":[["a@x",1]],"message":"jump","changes":[{{"type":"put","path":"f","content":"Yg=="}}]}}
+          ]
+        }}"#,
+        max_rev = snap::version::MAX_REVISION
+    );
+    sandbox.write("repo/.snap/repository.json", &patches_json);
+    sandbox.write("repo/f.txt", "z\n");
+
+    // Either validation catches the gap, or commit catches the overflow.
+    // Both must exit 1 — the repo must never accept a revision > MAX_REVISION.
+    let out = run(&env, &["commit", "overflow"]);
+    assert_eq!(out.code, 1);
+    assert!(
+        out.stderr.starts_with("snap:"),
+        "must produce a spec-conformant error, got: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn subdirectory_symlink_is_rejected() {
+    let sandbox = Sandbox::new();
+    let env = sandbox.env("repo");
+    ok(&sandbox.env("."), &["init", "repo"]);
+    sandbox.write("repo/sub/real.txt", "x\n");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("real.txt", sandbox.path("repo/sub/link")).unwrap();
+    let out = run(&env, &["status"]);
+    assert_eq!(out.code, 1);
+    assert_eq!(
+        out.stderr,
+        "snap: unsupported working tree entry: sub/link\n"
+    );
+}

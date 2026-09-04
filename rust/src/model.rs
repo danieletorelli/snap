@@ -620,7 +620,12 @@ mod tests {
             EditOp::Insert(vec!["b\n".into()])
         ])
         .is_err());
+        assert!(EditScript::new(vec![EditOp::Delete(1), EditOp::Delete(1)]).is_err());
         assert!(EditScript::new(vec![EditOp::Retain(1), EditOp::Delete(1)]).is_ok());
+        assert!(EditScript::new(vec![EditOp::Delete(1), EditOp::Retain(1)]).is_ok());
+        assert!(
+            EditScript::new(vec![EditOp::Delete(1), EditOp::Insert(vec!["x\n".into()])]).is_ok()
+        );
     }
 
     #[test]
@@ -629,6 +634,14 @@ mod tests {
         assert!(EditScript::new(vec![EditOp::Delete(0)]).is_err());
         assert!(EditScript::new(vec![EditOp::Insert(vec![])]).is_err());
         assert!(EditScript::new(vec![EditOp::Insert(vec![String::new()])]).is_err());
+        assert!(
+            EditScript::new(vec![EditOp::Retain(MAX_REVISION + 1)]).is_err(),
+            "counts above MAX_REVISION must be rejected"
+        );
+        assert!(
+            EditScript::new(vec![EditOp::Delete(MAX_REVISION + 1)]).is_err(),
+            "counts above MAX_REVISION must be rejected"
+        );
     }
 
     #[test]
