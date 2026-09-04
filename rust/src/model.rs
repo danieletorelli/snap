@@ -339,7 +339,9 @@ impl Patch {
     #[must_use]
     pub fn result(&self) -> Version {
         let mut result = self.base.clone();
-        result.set(&self.author, self.revision);
+        result
+            .set(&self.author, self.revision)
+            .expect("validated at construction");
         result
     }
 

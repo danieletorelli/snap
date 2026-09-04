@@ -107,7 +107,11 @@ impl Version {
     }
 
     /// Set a component, inserting or removing to preserve the invariant.
-    pub fn set(&mut self, id: &str, revision: u64) {
+    pub fn set(&mut self, id: &str, revision: u64) -> Result<()> {
+        validate_contributor_id(id)?;
+        if revision > MAX_REVISION {
+            return Err(error::invalid_version(id));
+        }
         match self
             .entries
             .binary_search_by(|probe| probe.0.as_ref().cmp(id))
@@ -125,6 +129,7 @@ impl Version {
                 }
             }
         }
+        Ok(())
     }
 
     /// Componentwise maximum (SPEC §3.3).
@@ -539,13 +544,21 @@ mod tests {
     #[test]
     fn set_maintains_the_sorted_nonzero_invariant() {
         let mut ver = Version::empty();
-        ver.set("b@x", 2);
-        ver.set("a@x", 1);
+        ver.set("b@x", 2).unwrap();
+        ver.set("a@x", 1).unwrap();
         assert_eq!(ver.to_string(), "(a@x->1,b@x->2)");
-        ver.set("a@x", 0); // zero removes
+        ver.set("a@x", 0).unwrap(); // zero removes
         assert_eq!(ver.to_string(), "(b@x->2)");
-        ver.set("c@x", 0); // absent stays absent
+        ver.set("c@x", 0).unwrap(); // absent stays absent
         assert_eq!(ver.to_string(), "(b@x->2)");
+    }
+
+    #[test]
+    fn set_rejects_invalid_ids_and_oversized_revisions() {
+        let mut ver = Version::empty();
+        assert!(ver.set("bad", 1).is_err());
+        assert!(ver.set("a@x", MAX_REVISION + 1).is_err());
+        assert!(ver.set("a@x", 1).is_ok());
     }
 
     #[test]
