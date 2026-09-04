@@ -4,6 +4,7 @@ version = "1.0.0"
 edition = "2021"
 rust-version = "1.82"
 publish = false
+license = "AGPL-3.0-only"
 
 [lib]
 name = "snap"
@@ -35,6 +36,8 @@ harness = false
 opt-level = 3
 lto = "thin"
 panic = "abort"
+codegen-units = 1
+strip = true
 
 [lints.rust]
 # `deny`, not `forbid`, so the single signal-handler registration in `http`
